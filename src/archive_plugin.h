@@ -44,7 +44,8 @@ public:
     QString getMirrorStatus(QString collectionId) override;
 
 private:
-    void pollGatewayHealth();   // P1: ping indexer + compute syncLagBlocks (surfaces LEZ#519)
+    void pollGatewayHealth();   // ping the gateway node + compute syncLagBlocks (surfaces LEZ#519)
+    void publishReadState();    // rebuild channelsJson/collectionsJson/summaryJson PROPs
 
     LogosAPI*      m_logosAPI = nullptr;
     LezClient*     m_lez = nullptr;

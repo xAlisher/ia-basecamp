@@ -1,0 +1,383 @@
+#include <algorithm>
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QtTest>
+
+#include "lez_client.h"
+#include "mock_node.h"
+
+// Backend tests per SPEC §13: deterministic, no network, mock gateway only.
+// State isolation: each test points XDG_DATA_HOME at a fresh temp dir.
+
+namespace {
+
+const QString kChannel =
+    QStringLiteral("8edab686b441eac68b194445a5052b65812ed25d68abe582824cadab99d5bf31");
+const QString kOtherChannel =
+    QStringLiteral("1111111111111111111111111111111111111111111111111111111111111111");
+
+QJsonArray toByteArray(const QByteArray& bytes)
+{
+    QJsonArray arr;
+    for (const char b : bytes)
+        arr.append(static_cast<int>(static_cast<unsigned char>(b)));
+    return arr;
+}
+
+QJsonObject inscribeOp(const QString& channelId, const QByteArray& inscription,
+                       const QString& signer)
+{
+    return QJsonObject{
+        { "opcode", 17 },
+        { "payload", QJsonObject{ { "channel_id", channelId },
+                                  { "inscription", toByteArray(inscription) },
+                                  { "parent", QStringLiteral("aa").repeated(32) },
+                                  { "signer", signer } } },
+    };
+}
+
+QJsonObject block(qint64 slot, const QString& txHash, const QJsonArray& ops)
+{
+    return QJsonObject{
+        { "header", QJsonObject{ { "slot", slot }, { "id", QStringLiteral("b%1").arg(slot) } } },
+        { "transactions", QJsonArray{ QJsonObject{
+              { "mantle_tx", QJsonObject{ { "hash", txHash }, { "ops", ops } } } } } },
+    };
+}
+
+QByteArray manifest(const char* id, const char* title, const char* cid, qint64 size)
+{
+    const QJsonObject m{ { "v", 1 },         { "type", "collection" }, { "id", id },
+                         { "title", title }, { "cid", cid },           { "sizeBytes", size },
+                         { "items", 3 },     { "thumbnail", "thumb-cid" } };
+    return QJsonDocument(m).toJson(QJsonDocument::Compact);
+}
+
+} // namespace
+
+class TstLezClient : public QObject {
+    Q_OBJECT
+
+private:
+    QTemporaryDir* m_dataDir = nullptr;
+    MockNode* m_node = nullptr;
+
+    LezClient* makeClient()
+    {
+        auto* c = new LezClient(this);
+        c->setGateways({ { m_node->baseUrl(), QString() } });
+        return c;
+    }
+
+    static bool waitForScan(LezClient* c, const QString& channelId, int timeoutMs = 5000)
+    {
+        QSignalSpy spy(c, &LezClient::scanFinished);
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < timeoutMs) {
+            if (spy.wait(200)) {
+                for (const QList<QVariant>& args : spy)
+                    if (args.at(0).toString() == channelId)
+                        return true;
+                spy.clear();
+            }
+        }
+        return false;
+    }
+
+private slots:
+    void init()
+    {
+        m_dataDir = new QTemporaryDir;
+        QVERIFY(m_dataDir->isValid());
+        qputenv("XDG_DATA_HOME", m_dataDir->path().toUtf8());
+
+        m_node = new MockNode(this);
+        QVERIFY(m_node->start());
+        m_node->info = QJsonObject{ { "slot", 10500 }, { "lib_slot", 10000 },
+                                    { "tip", "t" },    { "mode", "Online" } };
+    }
+
+    void cleanup()
+    {
+        delete m_node;
+        m_node = nullptr;
+        delete m_dataDir;
+        m_dataDir = nullptr;
+    }
+
+    // ── ref parsing ─────────────────────────────────────────────────────────
+
+    void parseRef_plainHex()
+    {
+        qint64 slot = -1;
+        QString err;
+        QCOMPARE(LezClient::parseChannelRef(kChannel.toUpper(), &slot, &err), kChannel);
+        QCOMPARE(slot, 0);
+    }
+
+    void parseRef_withStartSlot()
+    {
+        qint64 slot = 0;
+        QString err;
+        QCOMPARE(LezClient::parseChannelRef(kChannel + "@4700000", &slot, &err), kChannel);
+        QCOMPARE(slot, qint64(4700000));
+    }
+
+    void parseRef_url()
+    {
+        qint64 slot = 0;
+        QString err;
+        const QString url = "https://example.org/web/explorer/channels/" + kChannel + "?x=1";
+        QCOMPARE(LezClient::parseChannelRef(url, &slot, &err), kChannel);
+    }
+
+    void parseRef_invalid()
+    {
+        qint64 slot = 0;
+        QString err;
+        QVERIFY(LezClient::parseChannelRef("not-a-channel", &slot, &err).isEmpty());
+        QCOMPARE(err, QStringLiteral("invalid_channel_ref"));
+    }
+
+    // ── decode ──────────────────────────────────────────────────────────────
+
+    void extract_decodesMatchingInscriptions()
+    {
+        // one matching, one other-channel, one non-JSON payload on the right channel
+        QJsonArray ops;
+        ops.append(inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 42), "sig-1"));
+        ops.append(inscribeOp(kOtherChannel, manifest("cx", "Other", "cid-x", 1), "sig-x"));
+        ops.append(inscribeOp(kChannel, QByteArray("\x01\x02\x03binary"), "sig-1"));
+        const QJsonArray blocks{ block(9000, "tx-1", ops) };
+
+        const auto cols = LezClient::extractCollections(blocks, kChannel, 10000);
+        QCOMPARE(cols.size(), 1);
+        QCOMPARE(cols[0].id, QStringLiteral("c1"));
+        QCOMPARE(cols[0].title, QStringLiteral("Maps"));
+        QCOMPARE(cols[0].cid, QStringLiteral("cid-1"));
+        QCOMPARE(cols[0].sizeBytes, qint64(42));
+        QCOMPARE(cols[0].items, qint64(3));
+        QCOMPARE(cols[0].thumbnail, QStringLiteral("thumb-cid"));
+        QCOMPARE(cols[0].txHash, QStringLiteral("tx-1"));
+        QCOMPARE(cols[0].curator, QStringLiteral("sig-1"));
+        QCOMPARE(cols[0].inscribedAtSlot, qint64(9000));
+        QCOMPARE(cols[0].state, QStringLiteral("available"));
+    }
+
+    void extract_finalizedOnly()
+    {
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "T", "cid-1", 1), "s") };
+        const QJsonArray blocks{ block(10001, "tx-late", ops) };  // past lib_slot 10000
+        QCOMPARE(LezClient::extractCollections(blocks, kChannel, 10000).size(), 0);
+    }
+
+    void extract_permissiveManifest_cidOnly()
+    {
+        // keeper-style {"type":"cid_pin","cid":...} — degenerate but preservable
+        const QByteArray pin = R"({"v":1,"type":"cid_pin","cid":"ia:kuMUquaeE6g","source":"keeper"})";
+        QJsonArray ops{ inscribeOp(kChannel, pin, "s") };
+        const auto cols = LezClient::extractCollections({ block(9000, "tx-p", ops) }, kChannel, 10000);
+        QCOMPARE(cols.size(), 1);
+        QCOMPARE(cols[0].cid, QStringLiteral("ia:kuMUquaeE6g"));
+        QCOMPARE(cols[0].title, QStringLiteral("ia:kuMUquaeE6g"));  // falls back to cid
+        QCOMPARE(cols[0].id, QStringLiteral("tx-p"));               // falls back to txHash
+    }
+
+    // ── health ──────────────────────────────────────────────────────────────
+
+    void health_ready()
+    {
+        LezClient* c = makeClient();
+        QSignalSpy spy(c, &LezClient::healthChanged);
+        c->pollHealth();
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+        QCOMPARE(spy.last().at(1).toLongLong(), qint64(500));  // 10500 - 10000
+    }
+
+    void health_degradedOnLag()
+    {
+        m_node->info.insert("slot", 10000 + 5000);  // lag 5000 > threshold
+        LezClient* c = makeClient();
+        QSignalSpy spy(c, &LezClient::healthChanged);
+        c->pollHealth();
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("degraded"));
+    }
+
+    void health_offlineOnRefusal()
+    {
+        m_node->refuse = true;
+        LezClient* c = makeClient();
+        QSignalSpy spy(c, &LezClient::healthChanged);
+        QSignalSpy errSpy(c, &LezClient::errorOccurred);
+        c->pollHealth();
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("offline"));
+        QCOMPARE(errSpy.count(), 1);
+    }
+
+    // ── follow / scan / refresh ─────────────────────────────────────────────
+
+    void follow_scansHistory()
+    {
+        QJsonArray ops1{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 42), "sig") };
+        QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "Books", "cid-2", 7), "sig") };
+        m_node->blocks = QJsonArray{ block(8000, "tx-1", ops1), block(9500, "tx-2", ops2) };
+
+        LezClient* c = makeClient();
+        QString err;
+        const QString id = c->followChannel(kChannel + "@7000", &err);
+        QCOMPARE(id, kChannel);
+        QVERIFY(waitForScan(c, kChannel));
+
+        const QJsonArray cols = c->collectionsJson();
+        QCOMPARE(cols.size(), 2);
+        const QJsonArray chans = c->channelsJson();
+        QCOMPARE(chans.size(), 1);
+        QCOMPARE(chans[0].toObject().value("synced").toBool(), true);
+        QCOMPARE(chans[0].toObject().value("collections").toInt(), 2);
+        QCOMPARE(chans[0].toObject().value("lastInscription").toInt(), 9500);
+        QCOMPARE(c->summaryJson().value("following").toInt(), 1);
+        QCOMPARE(c->summaryJson().value("collections").toInt(), 2);
+    }
+
+    void follow_rejectsDuplicate()
+    {
+        LezClient* c = makeClient();
+        QString err;
+        QVERIFY(!c->followChannel(kChannel, &err).isEmpty());
+        QVERIFY(c->followChannel(kChannel, &err).isEmpty());
+        QCOMPARE(err, QStringLiteral("already_followed"));
+    }
+
+    void refresh_continuesFromCursor()
+    {
+        QJsonArray ops1{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 42), "sig") };
+        m_node->blocks = QJsonArray{ block(8000, "tx-1", ops1) };
+
+        LezClient* c = makeClient();
+        c->followChannel(kChannel + "@7000");
+        QVERIFY(waitForScan(c, kChannel));
+        QCOMPARE(c->collectionsJson().size(), 1);
+
+        // chain advances; a new inscription lands past the old lib
+        QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "Books", "cid-2", 7), "sig") };
+        m_node->blocks.append(block(10800, "tx-2", ops2));
+        m_node->info = QJsonObject{ { "slot", 11500 }, { "lib_slot", 11000 },
+                                    { "tip", "t" },    { "mode", "Online" } };
+
+        const int before = m_node->requestCount;
+        QVERIFY(c->refreshChannel(kChannel));
+        QVERIFY(waitForScan(c, kChannel));
+        QCOMPARE(c->collectionsJson().size(), 2);
+        // resumed from the cursor: only info + the delta pages, not a rescan of 7000+
+        QVERIFY(m_node->requestCount - before <= 3);
+    }
+
+    void unfollow_dropsCollections()
+    {
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 1), "sig") };
+        m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
+        LezClient* c = makeClient();
+        c->followChannel(kChannel + "@8000");
+        QVERIFY(waitForScan(c, kChannel));
+        QVERIFY(c->unfollowChannel(kChannel));
+        QCOMPARE(c->collectionsJson().size(), 0);
+        QCOMPARE(c->channelsJson().size(), 0);
+        QVERIFY(!c->unfollowChannel(kChannel));
+    }
+
+    void scan_multiPage()
+    {
+        // inscriptions 5 pages apart force pagination (kPageSlots = 2000)
+        QJsonArray ops1{ inscribeOp(kChannel, manifest("c1", "A", "cid-1", 1), "sig") };
+        QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "B", "cid-2", 1), "sig") };
+        m_node->blocks = QJsonArray{ block(1000, "tx-1", ops1), block(9900, "tx-2", ops2) };
+
+        LezClient* c = makeClient();
+        c->followChannel(kChannel + "@500");
+        QVERIFY(waitForScan(c, kChannel, 10000));
+        QCOMPARE(c->collectionsJson().size(), 2);
+    }
+
+    // ── persistence ─────────────────────────────────────────────────────────
+
+    void state_roundTrips()
+    {
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 42), "sig") };
+        m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
+
+        LezClient* c = makeClient();
+        c->setPreserveMode(QStringLiteral("local"));
+        c->followChannel(kChannel + "@8000");
+        QVERIFY(waitForScan(c, kChannel));
+
+        LezClient* c2 = new LezClient(this);
+        c2->loadState();
+        QCOMPARE(c2->preserveMode(), QStringLiteral("local"));
+        QCOMPARE(c2->gateways().size(), 1);
+        QCOMPARE(c2->gateways()[0].nodeUrl, m_node->baseUrl());
+        QCOMPARE(c2->channelsJson().size(), 1);
+        QCOMPARE(c2->collectionsJson().size(), 1);
+        QCOMPARE(c2->collectionsJson()[0].toObject().value("title").toString(),
+                 QStringLiteral("Maps"));
+    }
+
+    // ── failover ────────────────────────────────────────────────────────────
+
+    void failover_rotatesGateway()
+    {
+        MockNode dead;
+        QVERIFY(dead.start());
+        dead.refuse = true;
+
+        LezClient* c = new LezClient(this);
+        c->setGateways({ { dead.baseUrl(), QString() }, { m_node->baseUrl(), QString() } });
+        QCOMPARE(c->activeGateway(), 0);
+
+        QSignalSpy spy(c, &LezClient::healthChanged);
+        c->pollHealth();                       // gateway 0 refuses → offline + rotate
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("offline"));
+        QCOMPARE(c->activeGateway(), 1);
+
+        c->pollHealth();                       // gateway 1 answers → ready
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+    }
+
+    // ── live (opt-in: ARCHIVE_LIVE_NODE=http://host:port) ───────────────────
+
+    void live_readKeeperStyleChannel()
+    {
+        const QByteArray node = qgetenv("ARCHIVE_LIVE_NODE");
+        if (node.isEmpty())
+            QSKIP("set ARCHIVE_LIVE_NODE to run the live read");
+
+        // channel + slot from the P0 spike (docs/spikes/p0-channel-read.md)
+        const QString chan =
+            QStringLiteral("8edab686b441eac68b194445a5052b65812ed25d68abe582824cadab99d5bf31");
+        LezClient* c = new LezClient(this);
+        c->setGateways({ { QString::fromUtf8(node), QString() } });
+        QString err;
+        QCOMPARE(c->followChannel(chan + "@4709300", &err), chan);
+
+        // the known inscription sits in the first scan page — don't wait for full sync
+        const auto hasSpikeCid = [c] {
+            const QJsonArray cols = c->collectionsJson();
+            return std::any_of(cols.cbegin(), cols.cend(), [](const QJsonValue& v) {
+                return v.toObject().value("cid").toString() == QLatin1String("ia:kuMUquaeE6g");
+            });
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(hasSpikeCid(), 60000);
+    }
+};
+
+QTEST_MAIN(TstLezClient)
+#include "tst_lez_client.moc"
