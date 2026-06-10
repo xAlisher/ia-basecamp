@@ -335,6 +335,61 @@ private slots:
         QCOMPARE(c->collectionsJson().size(), 2);
     }
 
+    void deriveIaRef_bothConventions()
+    {
+        QString id, file;
+        LezClient::deriveIaRef("ia:anarchy_Cypherpunk_Manifesto", "", &id, &file);
+        QCOMPARE(id, QStringLiteral("anarchy_Cypherpunk_Manifesto"));
+        QVERIFY(file.isEmpty());
+
+        LezClient::deriveIaRef("zDvZRwzmXx",
+            QString::fromUtf8("Logos Storage: keeper-popeye_taxi-turvey-metadata.json \u2192 zDvZRwzmXx"),
+            &id, &file);
+        QCOMPARE(id, QStringLiteral("popeye_taxi-turvey"));
+        QCOMPARE(file, QStringLiteral("metadata.json"));
+
+        // arrow tail truncated away (persisted titles are label.left(120))
+        LezClient::deriveIaRef("zDvZ",
+            QStringLiteral("Logos Storage: keeper-popeye_big_bad_sinbad-__ia_thumb.jpg"),
+            &id, &file);
+        QCOMPARE(id, QStringLiteral("popeye_big_bad_sinbad"));
+        QCOMPARE(file, QStringLiteral("__ia_thumb.jpg"));
+
+        LezClient::deriveIaRef("zDvZ", "some unrelated label", &id, &file);
+        QVERIFY(id.isEmpty());
+    }
+
+    void state_legacyRowsGainIaRefAndRetry()
+    {
+        // simulate a state file written before iaId/iaFile existed, with an error row
+        const QString dir = QFileInfo(LezClient::stateFilePath()).path();
+        QDir().mkpath(dir);
+        const QJsonObject legacy{
+            { "gateways", QJsonArray{ QJsonObject{ { "nodeUrl", m_node->baseUrl() } } } },
+            { "preserveMode", "local" },
+            { "channels", QJsonArray{ QJsonObject{
+                  { "channelId", kChannel }, { "startSlot", 100 }, { "cursor", 200 },
+                  { "collections", QJsonArray{ QJsonObject{
+                        { "id", "c1" },
+                        { "title", "Logos Storage: keeper-popeye_big_bad_sinbad-__ia_thumb.jpg" },
+                        { "cid", "zDvZLegacy" },
+                        { "state", "error" },
+                    } } },
+              } } },
+        };
+        QFile f(LezClient::stateFilePath());
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(QJsonDocument(legacy).toJson(QJsonDocument::Compact));
+        f.close();
+
+        LezClient* c = new LezClient(this);
+        c->loadState();
+        const QJsonObject col = c->collectionsJson()[0].toObject();
+        QCOMPARE(col.value("iaId").toString(), QStringLiteral("popeye_big_bad_sinbad"));
+        QCOMPARE(col.value("iaFile").toString(), QStringLiteral("__ia_thumb.jpg"));
+        QCOMPARE(col.value("state").toString(), QStringLiteral("available"));
+    }
+
     // ── persistence ─────────────────────────────────────────────────────────
 
     void state_roundTrips()

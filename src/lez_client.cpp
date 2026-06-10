@@ -624,8 +624,14 @@ void LezClient::loadState()
             col.state = jsonStr(c, "state");
             col.iaId = jsonStr(c, "iaId");
             col.iaFile = jsonStr(c, "iaFile");
+            // migration: rows persisted before the iaId feature — the title IS the
+            // inscribed label, so the IA source is still derivable
+            if (col.iaId.isEmpty())
+                deriveIaRef(col.cid, col.title, &col.iaId, &col.iaFile);
             if (col.state == QLatin1String("mirroring"))   // no pin survives a restart
                 col.state = QStringLiteral("available");
+            if (col.state == QLatin1String("error"))       // errors aren't a property of
+                col.state = QStringLiteral("available");   // the collection — retryable
             ch.collections.append(col);
         }
         if (!ch.channelId.isEmpty())

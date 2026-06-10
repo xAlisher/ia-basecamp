@@ -120,9 +120,10 @@ Item {
     // ── Activity log ─────────────────────────────────────────────────────────
     ListModel { id: activityModel }
     function logEvent(kind, text) {
-        activityModel.insert(0, { kind: kind, text: text,
-                                  ts: Qt.formatDateTime(new Date(), "hh:mm:ss") })
-        if (activityModel.count > 200) activityModel.remove(200, activityModel.count - 200)
+        activityModel.append({ kind: kind, text: text,
+                               ts: Qt.formatDateTime(new Date(), "hh:mm:ss") })
+        if (activityModel.count > 100) activityModel.remove(0)   // keycard's cap, FIFO
+        if (typeof activityList !== "undefined") activityList.positionViewAtEnd()
     }
 
     // ── Toast — immediate feedback for copy/share/preserve actions ───────────
@@ -536,7 +537,6 @@ Item {
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
                             spacing: 8
                             ColumnLayout {
-                                Layout.fillWidth: true
                                 spacing: 2
                                 RowLayout {
                                     spacing: 6
@@ -577,6 +577,7 @@ Item {
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                             }
+                            Item { Layout.fillWidth: true }   // sole expander — pins actions to the edge
                             // right-aligned action group — consistent gaps
                             RowLayout {
                                 spacing: 6
@@ -760,33 +761,69 @@ Item {
                 }
             }
 
-            // ── Activity tab ─────────────────────────────────────────────────
-            ListView {
-                model: activityModel
-                clip: true
-                spacing: 2
-                delegate: RowLayout {
-                    width: ListView.view.width
-                    spacing: 8
-                    Label { text: model.ts; color: root.textMuted; font.pixelSize: 10 }
-                    Rectangle {
-                        width: 6; height: 6; radius: 3
-                        color: model.kind === "error" ? root.errorRed
-                             : model.kind === "mirror" ? root.successGreen
-                             : model.kind === "gateway" ? root.warningYellow : root.textSecondary
+            // ── Activity tab — keycard-basecamp's ActivityLog pattern ────────
+            Rectangle {
+                color: root.bgPrimary
+                Rectangle {   // top separator
+                    anchors { top: parent.top; left: parent.left; right: parent.right }
+                    height: 1; color: root.borderColor
+                }
+                // copy-all (keycard's two-rect clipboard glyph, top-right)
+                Rectangle {
+                    id: copyAllBtn
+                    anchors { top: parent.top; right: parent.right; topMargin: 8; rightMargin: 8 }
+                    width: 20; height: 20; color: "transparent"; z: 10
+                    opacity: copyAllArea.containsMouse ? 0.8 : 0.5
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                    Rectangle { x: 3; y: 5; width: 10; height: 10; color: "transparent"
+                                border.color: root.textMuted; border.width: 1; radius: 2 }
+                    Rectangle { x: 6; y: 2; width: 10; height: 10; color: root.bgPrimary
+                                border.color: root.textMuted; border.width: 1; radius: 2 }
+                    MouseArea {
+                        id: copyAllArea
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            var text = ""
+                            for (var i = 0; i < activityModel.count; i++) {
+                                var e = activityModel.get(i)
+                                text += "[" + e.ts + "] " + e.text + "\n"
+                            }
+                            root.copyText(text)
+                            copyAllBtn.opacity = 0.3
+                            copyFlash.restart()
+                            root.toast("Activity log copied")
+                        }
+                    }
+                    ToolTip { visible: copyAllArea.containsMouse; text: "Copy all logs"; delay: 500 }
+                    Timer { id: copyFlash; interval: 200
+                            onTriggered: copyAllBtn.opacity = copyAllArea.containsMouse ? 0.8 : 0.5 }
+                }
+                ListView {
+                    id: activityList
+                    anchors.fill: parent
+                    anchors.margins: 18
+                    spacing: 4
+                    clip: true
+                    model: activityModel
+                    delegate: TextEdit {
+                        width: activityList.width
+                        text: "[" + model.ts + "] " + model.text
+                        color: model.kind === "error" ? "#f44336"
+                             : (model.kind === "mirror" || model.kind === "share") ? "#4caf50"
+                             : model.kind === "gateway" ? "#ffc107" : "#888888"
+                        font.pixelSize: 12
+                        font.family: "monospace"
+                        wrapMode: TextEdit.WordWrap
+                        readOnly: true
+                        selectByMouse: true
                     }
                     Label {
-                        Layout.fillWidth: true
-                        text: model.text
-                        color: model.kind === "error" ? root.errorRed : root.textSecondary
-                        font.pixelSize: 11; elide: Text.ElideRight
+                        visible: activityModel.count === 0
+                        anchors.centerIn: parent
+                        text: "Follows, preserves and gateway events appear here."
+                        color: root.textMuted; font.pixelSize: 12
                     }
-                }
-                Label {
-                    visible: activityModel.count === 0
-                    anchors.centerIn: parent
-                    text: "Follows, preserves and gateway events appear here."
-                    color: root.textMuted; font.pixelSize: 12
                 }
             }
         }
