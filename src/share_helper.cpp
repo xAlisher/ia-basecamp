@@ -1,6 +1,7 @@
 #include "share_helper.h"
 
 #include <QDir>
+#include <QFile>
 #include <QJsonValue>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -90,6 +91,34 @@ QString sanitizeName(const QString& name)
     QString s = name;
     s.remove(bad);
     return s.left(64);
+}
+
+QJsonObject saveFromFile(const QString& dir, const QString& name, const QString& tmpPath)
+{
+    const QString safeName = sanitizeName(name);
+    if (safeName.isEmpty())
+        return fail(QStringLiteral("invalid_name"));
+    QFile in(tmpPath);
+    if (!in.open(QIODevice::ReadOnly))
+        return fail(QStringLiteral("grab_file_missing"));
+    if (in.size() > 16 * 1024 * 1024)
+        return fail(QStringLiteral("png_too_large"));
+    const QByteArray png = in.readAll();
+    in.close();
+    static const QByteArray pngMagic = QByteArray::fromHex("89504e470d0a1a0a");
+    if (png.size() < 67 || !png.startsWith(pngMagic))
+        return fail(QStringLiteral("invalid_png"));
+    if (!QDir().mkpath(dir))
+        return fail(QStringLiteral("cannot_create_dir"));
+    const QString path = dir + QLatin1Char('/') + safeName + QStringLiteral(".png");
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly))
+        return fail(QStringLiteral("cannot_write"));
+    f.write(png);
+    if (!f.commit())
+        return fail(QStringLiteral("cannot_write"));
+    QFile::remove(tmpPath);
+    return { { QStringLiteral("ok"), true }, { QStringLiteral("path"), path } };
 }
 
 QJsonObject savePngBase64(const QString& dir, const QString& name, const QString& pngBase64)

@@ -127,6 +127,31 @@ private slots:
         QCOMPARE(round.width(), 4);
     }
 
+    void saveFromFile_movesValidPng()
+    {
+        QTemporaryDir dir;
+        const QString tmp = dir.path() + "/grab.png";
+        QImage img(4, 4, QImage::Format_RGB32);
+        img.fill(Qt::blue);
+        QVERIFY(img.save(tmp, "PNG"));
+        const QJsonObject r = ShareHelper::saveFromFile(dir.path() + "/cards", "card-1", tmp);
+        QVERIFY(r.value("ok").toBool());
+        QVERIFY(QFile::exists(r.value("path").toString()));
+        QVERIFY(!QFile::exists(tmp));   // tmp consumed
+        QVERIFY(!QImage(r.value("path").toString()).isNull());
+    }
+
+    void saveFromFile_rejectsGarbageAndMissing()
+    {
+        QTemporaryDir dir;
+        QCOMPARE(ShareHelper::saveFromFile(dir.path(), "x", dir.path() + "/nope.png")
+                     .value("error").toString(), QStringLiteral("grab_file_missing"));
+        const QString bad = dir.path() + "/bad.png";
+        QFile f(bad); f.open(QIODevice::WriteOnly); f.write("not a png at all, padding padding padding padding padding padding"); f.close();
+        QCOMPARE(ShareHelper::saveFromFile(dir.path(), "x", bad)
+                     .value("error").toString(), QStringLiteral("invalid_png"));
+    }
+
     void savePng_rejectsGarbage()
     {
         QTemporaryDir dir;

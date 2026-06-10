@@ -66,6 +66,7 @@ public:
     // ── share cards (SPEC §12) ───────────────────────────────────────────────
     Q_INVOKABLE QString getShareData(const QString& scope);
     Q_INVOKABLE QString saveShareCard(const QString& pngBase64, const QString& name);
+    Q_INVOKABLE QString finalizeShareCard(const QString& tmpPath, const QString& name);
     Q_INVOKABLE QString revealCard(const QString& path);
 
 signals:

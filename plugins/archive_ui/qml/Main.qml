@@ -69,7 +69,10 @@ Item {
     // Edge-triggered logging — polls re-deliver unchanged values; the activity log
     // records transitions, the pills show state.
     property string _loggedGatewayState: ""
+    property string _loggedStorageState: ""
     property string _loggedError: ""
+    property var _prevCollectionStates: ({})   // id → state, for transition logging
+    property var _prevChannelSynced: ({})      // channelId → synced flag
 
     property bool pollBusy: false
     function poll() {
@@ -95,15 +98,56 @@ Item {
                 }
                 if (root.gatewayState !== root._loggedGatewayState) {
                     root._loggedGatewayState = root.gatewayState
-                    logEvent("gateway", "Gateway " + root.gatewayState)
+                    logEvent("gateway", "Gateway " + root.gatewayState
+                             + (root.syncLag > 0 && root.gatewayState === "degraded"
+                                ? " (lag " + root.syncLag + " slots)" : ""))
+                }
+                if (root.storageState !== root._loggedStorageState) {
+                    root._loggedStorageState = root.storageState
+                    logEvent(root.storageState === "ready" ? "mirror" : "gateway",
+                             "Storage " + root.storageState)
                 }
                 try {
                     var ch = safeParse(logos.callModule("archive", "getChannels", []), null)
-                    if (ch && ch.ok) root.channels = ch.channels || []
+                    if (ch && ch.ok) {
+                        var chNew = ch.channels || []
+                        for (var hi = 0; hi < chNew.length; hi++) {
+                            var h = chNew[hi]
+                            var prevSync = root._prevChannelSynced[h.channelId]
+                            if (prevSync === false && h.synced === true)
+                                logEvent("mirror", "Channel " + h.name + " fully synced")
+                            root._prevChannelSynced[h.channelId] = h.synced
+                        }
+                        // reassigning resets the ListView (scroll jumps) — only on change
+                        if (JSON.stringify(chNew) !== JSON.stringify(root.channels))
+                            root.channels = chNew
+                    }
                 } catch (e1) {}
                 try {
                     var co = safeParse(logos.callModule("archive", "getCollections", [""]), null)
-                    if (co && co.ok) root.collections = co.collections || []
+                    if (co && co.ok) {
+                        var coNew = co.collections || []
+                        // per-collection preservation transitions → activity log
+                        for (var ci = 0; ci < coNew.length; ci++) {
+                            var c = coNew[ci]
+                            var prev = root._prevCollectionStates[c.id]
+                            var label = (c.iaId || c.title || "collection")
+                                        + (c.iaFile ? "/" + c.iaFile : "")
+                            if (prev !== undefined && prev !== c.state) {
+                                if (c.state === "mirrored")
+                                    logEvent("mirror", "Preserved " + label)
+                                else if (c.state === "mirroring")
+                                    logEvent("info", "Preserving " + label + "…")
+                                else if (c.state === "error")
+                                    logEvent("error", "Preserve failed: " + label)
+                                else if (c.state === "available" && prev === "mirrored")
+                                    logEvent("info", "Removed " + label)
+                            }
+                            root._prevCollectionStates[c.id] = c.state
+                        }
+                        if (JSON.stringify(coNew) !== JSON.stringify(root.collections))
+                            root.collections = coNew
+                    }
                 } catch (e2) {}
             } else {
                 root.gatewayState = "offline"
@@ -119,7 +163,29 @@ Item {
         onTriggered: root.poll()
     }
 
+    // optimistic UI: flip a collection's state locally the instant the user acts;
+    // the next poll reconciles with the backend's truth
+    function flipCollectionState(collectionId, newState) {
+        var copy = root.collections.slice()
+        for (var i = 0; i < copy.length; i++) {
+            if (copy[i].id === collectionId) {
+                var row = JSON.parse(JSON.stringify(copy[i]))
+                row.state = newState
+                copy[i] = row
+                break
+            }
+        }
+        root.collections = copy
+    }
+
     function gb(bytes) { return (bytes / 1e9).toFixed(bytes > 0 && bytes < 1e8 ? 2 : 1) }
+    function prettySize(bytes) {
+        if (!bytes || bytes <= 0) return "0 B"
+        if (bytes < 1024) return bytes + " B"
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB"
+        if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MB"
+        return (bytes / 1073741824).toFixed(2) + " GB"
+    }
     function shortId(s) { return s ? s.substring(0, 8) + "…" : "" }
     function explorerUrl(tx) {
         return "https://logosblocks.noders.services/txs/" + tx
@@ -166,41 +232,43 @@ Item {
         interval: 120
         onTriggered: {
             var ok = shareCard.grabToImage(function(result) {
-                exportCanvas.exportUrl = result.url
-                exportCanvas.loadImage(result.url)
+                shareWatchdog.stop()
+                var name = "ia-archive-" + (root.shareData && root.shareData.scope === "me"
+                                             ? "contribution" : "collection")
+                           + "-" + Qt.formatDateTime(new Date(), "yyyyMMdd-hhmmss")
+                var tmp = "/tmp/ia-archive-card-grab.png"
+                if (!result.saveToFile(tmp)) {
+                    root.shareBusy = false
+                    root.toast("Share failed: could not write the grabbed image")
+                    return
+                }
+                root.call("finalizeShareCard", [tmp, name], function(r) {
+                    root.shareBusy = false
+                    if (r && r.ok) {
+                        root.logEvent("share", "Card saved — " + r.path)
+                        root.toast("Card saved — opening folder")
+                        root.call("revealCard", [r.path], null)
+                    } else {
+                        root.toast("Share failed: " + (r ? r.error : "save failed"))
+                    }
+                })
             }, Qt.size(1200, 675))
-            if (!ok) { root.shareBusy = false; root.toast("Share failed: card render rejected") }
+            if (!ok) {
+                root.shareBusy = false
+                root.toast("Share failed: card render rejected")
+            } else {
+                shareWatchdog.restart()   // grab callbacks can silently never fire
+            }
         }
     }
-    Canvas {
-        id: exportCanvas
-        width: 1200; height: 675
-        visible: false
-        property url exportUrl
-        onImageLoaded: {
-            var ctx = getContext("2d")
-            ctx.drawImage(exportUrl, 0, 0, width, height)
-            requestPaint()
-        }
-        onPainted: {
-            if (exportUrl == "") return
-            var dataUrl = toDataURL("image/png")
-            unloadImage(exportUrl)
-            exportUrl = ""
-            var b64 = dataUrl.substring(dataUrl.indexOf(",") + 1)
-            var name = "ia-archive-" + (root.shareData && root.shareData.scope === "me"
-                                         ? "contribution" : "collection")
-                       + "-" + Qt.formatDateTime(new Date(), "yyyyMMdd-hhmmss")
-            root.call("saveShareCard", [b64, name], function(r) {
+    Timer {
+        id: shareWatchdog
+        interval: 8000
+        onTriggered: {
+            if (root.shareBusy) {
                 root.shareBusy = false
-                if (r && r.ok) {
-                    root.logEvent("share", "Card saved — " + r.path)
-                    root.toast("Card saved — opening folder")
-                    root.call("revealCard", [r.path], null)
-                } else {
-                    root.toast("Share failed: " + (r ? r.error : "save failed"))
-                }
-            })
+                root.toast("Share timed out — try again")
+            }
         }
     }
 
@@ -466,7 +534,7 @@ Item {
                     text: "You're preserving "
                           + (root.summary.mirrored || 0) + " collection"
                           + ((root.summary.mirrored || 0) === 1 ? "" : "s")
-                          + " · " + root.gb(root.summary.usedBytes || 0) + " GB"
+                          + " · " + root.prettySize(root.summary.usedBytes || 0)
                     color: root.textPrimary; font.pixelSize: 14; font.bold: true
                 }
                 Item { Layout.fillWidth: true }
@@ -713,12 +781,17 @@ Item {
                                     visible: modelData.state !== "mirrored"
                                     text: "Preserve"
                                     enabled: modelData.state !== "mirroring" && !!modelData.id
+                                             && root.storageState === "ready"
                                     onClicked: {
-                                        var R = root, t = modelData.iaId || modelData.title
+                                        var R = root, t = modelData.iaId || modelData.title, id = modelData.id
+                                        R.flipCollectionState(id, "mirroring")   // instant feedback
                                         R.toast("Preserving " + t + "…")
-                                        R.call("mirrorCollection", [modelData.id], function(r) {
+                                        R.call("mirrorCollection", [id], function(r) {
                                             if (r && r.ok) R.logEvent("mirror", "Preserving " + t)
-                                            else R.toast("Preserve failed: " + (r ? r.error : "no response"))
+                                            else {
+                                                R.flipCollectionState(id, "available")
+                                                R.toast("Preserve failed: " + (r ? r.error : "no response"))
+                                            }
                                         })
                                     }
                                 }
@@ -726,7 +799,7 @@ Item {
                                     visible: modelData.state === "mirrored"
                                     text: "Remove"
                                     Layout.preferredWidth: 84   // same footprint as Preserve
-                                    enabled: !!modelData.id
+                                    enabled: !!modelData.id && root.storageState === "ready"
                                     onClicked: {
                                         var R = root, t = modelData.iaId || modelData.title
                                         R.call("unmirrorCollection", [modelData.id], function(r) {

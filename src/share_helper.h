@@ -21,6 +21,10 @@ QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
 // CID-shaped (letters/digits/:/-/_/.), no scheme, no slashes — else empty.
 QString resolveThumbnail(const QString& thumbnail, const QString& base);
 
+// Validates the PNG at tmpPath (magic + size caps) and moves it to
+// <dir>/<sanitized name>.png atomically; removes tmpPath. {ok,path}|{ok:false,error}.
+QJsonObject saveFromFile(const QString& dir, const QString& name, const QString& tmpPath);
+
 // Decodes base64 PNG data and writes <dir>/<sanitized name>.png atomically.
 // Validates the PNG magic — QML's grabToImage must have produced a real image.
 // Returns {ok:true,path} or {ok:false,error}.

@@ -291,8 +291,11 @@ void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
     qInfo() << "ArchivePlugin: reseed downloading" << url.toString();
     QNetworkReply* reply = m_nam->get(req);
 
+    // EXACTLY keeper's temp naming: the storage dataset manifest embeds the
+    // filename, so reproducing the inscribed CID requires the same name keeper
+    // uploaded under — not just the same bytes
     const QString tmpPath = QDir::tempPath()
-        + QStringLiteral("/ia-archive-%1-%2")
+        + QStringLiteral("/keeper-%1-%2")
               .arg(QString(iaId).replace(QLatin1Char('/'), QLatin1Char('_')),
                    QString(iaFile).replace(QLatin1Char('/'), QLatin1Char('_')));
     auto* out = new QFile(tmpPath, reply);
@@ -407,6 +410,16 @@ QString ArchivePlugin::getShareData(const QString& scope)
 QString ArchivePlugin::saveShareCard(const QString& pngBase64, const QString& name)
 {
     const QJsonObject r = ShareHelper::savePngBase64(cardsDir(), name, pngBase64);
+    if (!r.value(QStringLiteral("ok")).toBool())
+        m_lastError = r.value(QStringLiteral("error")).toString();
+    return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
+}
+
+QString ArchivePlugin::finalizeShareCard(const QString& tmpPath, const QString& name)
+{
+    // grabToImage's saveToFile wrote the PNG (no Canvas leg — it silently never
+    // paints while invisible); validate + move it into the cards dir
+    const QJsonObject r = ShareHelper::saveFromFile(cardsDir(), name, tmpPath);
     if (!r.value(QStringLiteral("ok")).toBool())
         m_lastError = r.value(QStringLiteral("error")).toString();
     return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
