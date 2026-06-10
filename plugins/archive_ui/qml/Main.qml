@@ -374,12 +374,16 @@ Item {
                 Layout.fillWidth: true
                 spacing: 28
                 Label {
-                    text: root.shareData ? root.gb((root.shareData.totalGB || 0) * 1e9) : "0"
+                    text: root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[0] : "0"
                     color: root.accentOrange; font.pixelSize: 120; font.bold: true
                 }
                 ColumnLayout {
                     spacing: 4
-                    Label { text: "GB preserved"; color: "#FFFFFF"; font.pixelSize: 30 }
+                    Label {
+                        text: (root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[1] : "GB")
+                              + " preserved"
+                        color: "#FFFFFF"; font.pixelSize: 30
+                    }
                     Label {
                         text: root.shareData && root.shareData.scope === "me"
                               ? (root.shareData.count || 0) + " collections" : "on decentralized Storage"
@@ -823,8 +827,12 @@ Item {
                                     text: "tx " + root.shortId(modelData.txHash)
                                     enabled: !!modelData.txHash
                                     onClicked: {
-                                        root.copyText(root.explorerUrl(modelData.txHash))
-                                        root.toast("Explorer link copied")
+                                        var R = root
+                                        R.copyText(R.explorerUrl(modelData.txHash))
+                                        R.call("openExplorerTx", [modelData.txHash], function(r) {
+                                            R.toast(r && r.ok ? "Opening in explorer (link copied too)"
+                                                              : "Explorer link copied")
+                                        })
                                     }
                                     contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 11 }
                                     background: Rectangle { color: "transparent" }

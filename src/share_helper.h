@@ -15,8 +15,11 @@ namespace ShareHelper {
 // Thumbnails are chain-inscribed (untrusted): a value is only emitted when it is a
 // bare CID-shaped token, resolved against `thumbnailBase` (the gateway's storage
 // endpoint) — full URLs from manifests are never passed through to the UI.
+// fallbackUsedBytes: real stored bytes (storage quotaUsedBytes) — cid_pin manifests
+// carry no sizeBytes, so the manifest sum is often 0
 QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
-                           const QString& thumbnailBase = QString());
+                           const QString& thumbnailBase = QString(),
+                           qint64 fallbackUsedBytes = 0);
 
 // CID-shaped (letters/digits/:/-/_/.), no scheme, no slashes — else empty.
 QString resolveThumbnail(const QString& thumbnail, const QString& base);

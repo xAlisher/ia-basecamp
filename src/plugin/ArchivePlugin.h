@@ -68,6 +68,7 @@ public:
     Q_INVOKABLE QString saveShareCard(const QString& pngBase64, const QString& name);
     Q_INVOKABLE QString finalizeShareCard(const QString& tmpPath, const QString& name);
     Q_INVOKABLE QString revealCard(const QString& path);
+    Q_INVOKABLE QString openExplorerTx(const QString& txHash);   // browser via system opener
 
 signals:
     // ModuleProxy requires this exact signal on the concrete class —

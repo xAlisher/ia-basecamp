@@ -43,7 +43,7 @@ QString resolveThumbnail(const QString& thumbnail, const QString& base)
 }
 
 QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
-                           const QString& thumbnailBase)
+                           const QString& thumbnailBase, qint64 fallbackUsedBytes)
 {
     QJsonArray items;
     qint64 totalBytes = 0;
@@ -58,10 +58,13 @@ QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
         }
         if (items.isEmpty())
             return fail(QStringLiteral("nothing_preserved_yet"));
+        if (totalBytes == 0)
+            totalBytes = fallbackUsedBytes;   // manifests without sizes → real stored bytes
         return {
             { QStringLiteral("ok"), true },
             { QStringLiteral("scope"), QStringLiteral("me") },
             { QStringLiteral("title"), QStringLiteral("I'm preserving the archive") },
+            { QStringLiteral("totalBytes"), totalBytes },
             { QStringLiteral("totalGB"), toGb(totalBytes) },
             { QStringLiteral("count"), items.size() },
             { QStringLiteral("items"), items },

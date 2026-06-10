@@ -13,6 +13,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -403,7 +404,7 @@ QString ArchivePlugin::getShareData(const QString& scope)
     const QString thumbBase =
         gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).storageUrl;
     const QJsonObject data =
-        ShareHelper::buildShareData(m_lez->collectionsJson(), scope, thumbBase);
+        ShareHelper::buildShareData(m_lez->collectionsJson(), scope, thumbBase, m_usedBytes);
     return QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact));
 }
 
@@ -423,6 +424,24 @@ QString ArchivePlugin::finalizeShareCard(const QString& tmpPath, const QString& 
     if (!r.value(QStringLiteral("ok")).toBool())
         m_lastError = r.value(QStringLiteral("error")).toString();
     return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
+}
+
+QString ArchivePlugin::openExplorerTx(const QString& txHash)
+{
+    static const QRegularExpression hex64(QStringLiteral("^[0-9a-fA-F]{64}$"));
+    if (!hex64.match(txHash).hasMatch())
+        return fail(QStringLiteral("invalid_tx_hash"));
+    const QString url = QStringLiteral("https://logosblocks.noders.services/txs/") + txHash.toLower();
+#if defined(Q_OS_DARWIN)
+    const QString opener = QStringLiteral("open");
+#elif defined(Q_OS_WIN)
+    const QString opener = QStringLiteral("explorer");
+#else
+    const QString opener = QStringLiteral("xdg-open");
+#endif
+    if (!QProcess::startDetached(opener, { url }))
+        return fail(QStringLiteral("cannot_open_browser"));
+    return ok({ { QStringLiteral("url"), url } });
 }
 
 QString ArchivePlugin::revealCard(const QString& path)
