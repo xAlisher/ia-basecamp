@@ -92,3 +92,17 @@ delivered in its own change notification.
 **Win** · delivery-demo (logos-co/logos-delivery-demo) is the canonical QML reference for the
 QRO-backend shape: logos.module() + PROPs as live bindings + logos.watch(slot(), cb). Radio's
 main branch uses the other path (logos.callModule IPC bridge) — don't mix the two patterns.
+
+## 2026-06-10 — P4 (issue #6)
+
+**Fail** · shipped failover-on-lag with a test that "proved" mid-scan resilience · the test
+let the first scan complete before killing the gateway, so the genuinely risky path (death
+between pages of one pagination) was never exercised — and that path had a real bug: a
+health-poll rotation mid-scan would mix gateway A's lib_slot with gateway B's blocks and
+silently skip inscriptions. Root cause: naming a test after the property you want rather than
+the scenario it creates. Senty caught both the bug and the test gap in one pass.
+
+**Win** · the fix shape — pin every multi-request operation to the resource captured at its
+start (gateway index here), let mid-operation failures fail cleanly with persisted progress,
+and re-resolve the resource only at the next operation start. Same family as P1's generation
+guard: capture context once, verify ownership at every async boundary.
