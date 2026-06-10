@@ -239,6 +239,8 @@ private slots:
     void upload_completesViaEvent()
     {
         StorageClient c(&m_transport);
+        c.initStorage(QStringLiteral("/tmp/x"));   // subscriptions happen up-front now
+        QVERIFY(m_transport.uploadDoneCb != nullptr);
         QSignalSpy done(&c, &StorageClient::uploadFinished);
         c.upload(QStringLiteral("/tmp/f.bin"));
         QCOMPARE(done.count(), 0);                       // accepted — waiting on the event
@@ -254,6 +256,7 @@ private slots:
     void upload_singleInFlight()
     {
         StorageClient c(&m_transport);
+        c.initStorage(QStringLiteral("/tmp/x"));
         QSignalSpy done(&c, &StorageClient::uploadFinished);
         c.upload(QStringLiteral("/tmp/a"));
         c.upload(QStringLiteral("/tmp/b"));              // rejected by the guard
@@ -266,6 +269,7 @@ private slots:
     {
         m_transport.uploadAccepted = false;
         StorageClient c(&m_transport);
+        c.initStorage(QStringLiteral("/tmp/x"));
         QSignalSpy done(&c, &StorageClient::uploadFinished);
         c.upload(QStringLiteral("/tmp/a"));
         QCOMPARE(done.last().at(0).toBool(), false);

@@ -153,6 +153,9 @@ void LogosStorageTransport::exists(const QString& cid, std::function<void(bool, 
 void LogosStorageTransport::space(std::function<void(bool, qint64)> cb)
 {
     const LogosResult r = m_storage->space();
+    QString raw;
+    try { raw = r.getValue<QString>(); } catch (...) {}
+    qInfo() << "LogosStorageTransport: space() success=" << r.success << "value=" << raw;
     const qint64 bytes = r.success ? usedBytesFrom(r) : -1;
     cb(r.success && bytes >= 0, bytes < 0 ? 0 : bytes);
 }

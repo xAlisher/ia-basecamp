@@ -16,8 +16,18 @@ void StorageClient::initStorage(const QString& dataDir)
     if (m_initInFlight)
         return;
     m_initInFlight = true;
-    // subscribe BEFORE any IPC — the storageStart event is the real "ready for
-    // transfers" signal (start() returning only means bootstrap began)
+    // subscribe BEFORE any IPC (stash's rule — a mid-flight subscription breaks
+    // LogosResult delivery on the client object): both events up-front
+    if (!m_uploadSubscribed) {
+        m_uploadSubscribed = true;
+        m_transport->subscribeUploadDone(
+            [this](bool ok, const QString& cid, const QString& error) {
+                if (!m_uploading)
+                    return;   // stray event from another consumer
+                m_uploading = false;
+                emit uploadFinished(ok, cid, error);
+            });
+    }
     m_transport->subscribeStarted([this](bool ok) {
         if (ok)
             m_everReady = true;
@@ -80,16 +90,6 @@ void StorageClient::upload(const QString& path)
         return;
     }
     m_uploading = true;
-    if (!m_uploadSubscribed) {
-        m_uploadSubscribed = true;
-        m_transport->subscribeUploadDone(
-            [this](bool ok, const QString& cid, const QString& error) {
-                if (!m_uploading)
-                    return;   // stray event from another consumer
-                m_uploading = false;
-                emit uploadFinished(ok, cid, error);
-            });
-    }
     m_transport->upload(path, [this](bool accepted, const QString& error) {
         if (!accepted) {
             m_uploading = false;
