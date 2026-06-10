@@ -18,13 +18,17 @@ public:
     QSet<QString> held;
     qint64 usedBytes = 0;
     bool deferInit = false;          // hold the init callback for manual release
+    bool alreadyRunning = false;     // pre-existing instance answered version()
     BoolCb pendingInitCb;
+    std::function<void(bool)> startedCb;   // the storageStart event hook
 
+    void subscribeStarted(std::function<void(bool)> cb) override { startedCb = cb; }
     void initAndStart(const QString& dataDir, BoolCb cb) override
     {
         calls << "initAndStart:" + dataDir;
         if (deferInit) { pendingInitCb = cb; return; }
-        cb(nodeUp, nodeUp ? QString() : QStringLiteral("storage_start_failed"));
+        if (!nodeUp) { cb(false, QStringLiteral("storage_start_failed")); return; }
+        cb(true, alreadyRunning ? QStringLiteral("already_running") : QString());
     }
     void ping(BoolCb cb) override
     {
@@ -64,14 +68,26 @@ private:
 private slots:
     void init() { m_transport = MockTransport(); }
 
-    void initStorage_bringsNodeUp()
+    void initStorage_twoPhaseReadiness()
     {
+        // start() accepted → "starting" (yellow); storageStart event → "ready" (green)
         StorageClient c(&m_transport);
         QSignalSpy spy(&c, &StorageClient::healthChanged);
         c.initStorage(QStringLiteral("/tmp/x"));
-        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("starting"));
+        QVERIFY(m_transport.startedCb != nullptr);   // subscribed BEFORE init returned
+        m_transport.startedCb(true);
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
         QVERIFY(m_transport.calls.first().startsWith("initAndStart:/tmp/x"));
+    }
+
+    void initStorage_preExistingInstanceIsReady()
+    {
+        m_transport.alreadyRunning = true;
+        StorageClient c(&m_transport);
+        QSignalSpy spy(&c, &StorageClient::healthChanged);
+        c.initStorage(QStringLiteral("/tmp/x"));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
     }
 
     void initStorage_failureIsOffline()
@@ -93,18 +109,28 @@ private slots:
         QCOMPARE(m_transport.calls.size(), 1);
         QSignalSpy spy(&c, &StorageClient::healthChanged);
         m_transport.pendingInitCb(true, QString());  // release
-        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("starting"));
     }
 
-    void health_pingBothWays()
+    void health_pingNeverPromotesToReady()
     {
         StorageClient c(&m_transport);
         QSignalSpy spy(&c, &StorageClient::healthChanged);
-        c.pollHealth();
-        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+        c.pollHealth();   // alive from offline → starting, NOT ready (event's job)
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("starting"));
         m_transport.nodeUp = false;
         c.pollHealth();
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("offline"));
+    }
+
+    void health_pingKeepsReadyOnceEventArrived()
+    {
+        StorageClient c(&m_transport);
+        c.initStorage(QStringLiteral("/tmp/x"));
+        m_transport.startedCb(true);
+        QSignalSpy spy(&c, &StorageClient::healthChanged);
+        c.pollHealth();
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
     }
 
     void pin_success()

@@ -18,6 +18,10 @@ public:
     using BoolCb = std::function<void(bool ok, const QString& error)>;
 
     virtual ~StorageTransport() = default;
+    // storageStart event subscription — fires when the node is actually ready for
+    // transfers (~30s after start() returns). Subscribe BEFORE any IPC (stash rule).
+    virtual void subscribeStarted(std::function<void(bool ok)> cb) = 0;
+    // cb(ok=true, error="already_running") when a pre-existing instance answered
     virtual void initAndStart(const QString& dataDir, BoolCb cb) = 0;
     virtual void ping(BoolCb cb) = 0;                          // node alive?
     virtual void fetch(const QString& cid, BoolCb cb) = 0;     // replicate to the local node
@@ -31,6 +35,7 @@ public:
 // must load and read channels regardless; storage simply reports offline.
 class NullStorageTransport : public StorageTransport {
 public:
+    void subscribeStarted(std::function<void(bool)>) override {}
     void initAndStart(const QString&, BoolCb cb) override
     {
         cb(false, QStringLiteral("storage_unavailable"));
@@ -64,6 +69,8 @@ public:
     void initStorage(const QString& dataDir);
 
     void pollHealth();
+    // offline (red) → starting (yellow: start accepted, libstorage bootstrapping)
+    // → ready (green: storageStart event arrived — transfers will work)
     QString storageState() const { return m_storageState; }
 
     void pin(const QString& cid);               // → pinFinished
@@ -82,7 +89,7 @@ signals:
     void repoStatResult(qint64 usedBytes);
 
 private:
-    void setState(bool up);
+    void setState(const QString& state);
 
     StorageTransport* m_transport;   // owned by the plugin, outlives this client
     QString m_storageState = QStringLiteral("offline");

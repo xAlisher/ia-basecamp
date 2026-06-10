@@ -172,7 +172,7 @@ Item {
 
     function stateColor(s) {
         return s === "ready" ? successGreen
-             : s === "degraded" ? warningYellow : errorRed
+             : (s === "degraded" || s === "starting") ? warningYellow : errorRed
     }
     function mirrorColor(s) {
         return s === "mirrored" ? successGreen

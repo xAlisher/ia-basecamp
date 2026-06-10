@@ -209,7 +209,9 @@ QString ArchivePlugin::mirrorCollection(const QString& collectionId)
     if (m_cidToCollection.contains(cid))
         return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
-        return fail(QStringLiteral("storage_offline"));
+        return fail(m_storage->storageState() == QLatin1String("starting")
+                        ? QStringLiteral("storage_starting")
+                        : QStringLiteral("storage_offline"));
     m_cidToCollection.insert(cid, collectionId);
     m_lez->setCollectionState(collectionId, QStringLiteral("mirroring"), 0);
     m_storage->pin(cid);
@@ -226,7 +228,9 @@ QString ArchivePlugin::unmirrorCollection(const QString& collectionId)
     if (m_cidToCollection.contains(cid))
         return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
-        return fail(QStringLiteral("storage_offline"));
+        return fail(m_storage->storageState() == QLatin1String("starting")
+                        ? QStringLiteral("storage_starting")
+                        : QStringLiteral("storage_offline"));
     m_cidToCollection.insert(cid, collectionId);
     m_storage->unpin(cid);
     return ok({ { QStringLiteral("collectionId"), collectionId } });

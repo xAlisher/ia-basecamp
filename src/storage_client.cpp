@@ -5,9 +5,9 @@ StorageClient::StorageClient(StorageTransport* transport, QObject* parent)
 {
 }
 
-void StorageClient::setState(bool up)
+void StorageClient::setState(const QString& state)
 {
-    m_storageState = up ? QStringLiteral("ready") : QStringLiteral("offline");
+    m_storageState = state;
     emit healthChanged(m_storageState);
 }
 
@@ -16,9 +16,20 @@ void StorageClient::initStorage(const QString& dataDir)
     if (m_initInFlight)
         return;
     m_initInFlight = true;
-    m_transport->initAndStart(dataDir, [this](bool ok, const QString&) {
+    // subscribe BEFORE any IPC — the storageStart event is the real "ready for
+    // transfers" signal (start() returning only means bootstrap began)
+    m_transport->subscribeStarted([this](bool ok) {
+        setState(ok ? QStringLiteral("ready") : QStringLiteral("offline"));
+    });
+    m_transport->initAndStart(dataDir, [this](bool ok, const QString& error) {
         m_initInFlight = false;
-        setState(ok);
+        if (!ok) {
+            setState(QStringLiteral("offline"));
+            return;
+        }
+        // a pre-existing instance already went through its bootstrap
+        setState(error == QLatin1String("already_running") ? QStringLiteral("ready")
+                                                           : QStringLiteral("starting"));
     });
 }
 
@@ -26,7 +37,18 @@ void StorageClient::pollHealth()
 {
     if (m_initInFlight)
         return;   // bring-up in progress — its completion sets the state
-    m_transport->ping([this](bool ok, const QString&) { setState(ok); });
+    m_transport->ping([this](bool ok, const QString&) {
+        if (!ok) {
+            setState(QStringLiteral("offline"));
+            return;
+        }
+        // never promote to ready from a mere ping — that's the event's job;
+        // recovering from offline lands in starting until storageStart says green
+        if (m_storageState == QLatin1String("offline"))
+            setState(QStringLiteral("starting"));
+        else
+            emit healthChanged(m_storageState);   // unchanged, keep the UI in sync
+    });
 }
 
 void StorageClient::pin(const QString& cid)

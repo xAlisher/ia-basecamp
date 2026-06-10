@@ -14,6 +14,7 @@ public:
     explicit LogosStorageTransport(LogosAPI* api);
     ~LogosStorageTransport() override;
 
+    void subscribeStarted(std::function<void(bool ok)> cb) override;
     void initAndStart(const QString& dataDir, BoolCb cb) override;
     void ping(BoolCb cb) override;
     void fetch(const QString& cid, BoolCb cb) override;

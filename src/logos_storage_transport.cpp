@@ -66,6 +66,14 @@ LogosStorageTransport::~LogosStorageTransport()
     delete m_storage;
 }
 
+void LogosStorageTransport::subscribeStarted(std::function<void(bool)> cb)
+{
+    // storageStart payload: [bool ok, msg] (stash's documented shape)
+    m_storage->on(QStringLiteral("storageStart"), [cb](const QVariantList& d) {
+        cb(!d.isEmpty() && d.first().toBool());
+    });
+}
+
 void LogosStorageTransport::ping(BoolCb cb)
 {
     const LogosResult r = m_storage->version();
@@ -92,7 +100,8 @@ void LogosStorageTransport::initAndStart(const QString& dataDir, BoolCb cb)
     }
     const LogosResult alive = m_storage->version();
     if (alive.success) {
-        cb(true, QString());   // someone else (stash / a previous session) runs it
+        // someone else (stash / a previous session) runs it — bootstrap already done
+        cb(true, QStringLiteral("already_running"));
         return;
     }
     cb(false, initOk ? QStringLiteral("storage_start_failed")
