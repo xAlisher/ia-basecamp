@@ -715,6 +715,7 @@ Item {
                                 DarkButton {
                                     visible: modelData.state === "mirrored"
                                     text: "Remove"
+                                    Layout.preferredWidth: 84   // same footprint as Preserve
                                     enabled: !!modelData.id
                                     onClicked: {
                                         var R = root, t = modelData.iaId || modelData.title
