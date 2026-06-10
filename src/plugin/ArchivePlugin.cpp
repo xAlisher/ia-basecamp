@@ -35,6 +35,8 @@ void ArchivePlugin::initLogos(LogosAPI* api)
 {
     if (m_lez) return;
     m_logosAPI = api;
+    logosAPI = api;   // PluginInterface's public member — QtProviderObject refuses every
+                      // callMethod ("LogosAPI not available") until this is set
     m_lez = new LezClient(this);           // gateway node reads (SPEC §4.1) — pure HTTP
     // Preserve goes ONLY to Logos Storage via the platform storage_module — from
     // logos_host, the proven stash path. The guard stays for safety (a mismatched
