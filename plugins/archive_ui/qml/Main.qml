@@ -708,7 +708,7 @@ Item {
                                 }
                                 DarkButton {
                                     visible: modelData.state === "mirrored"
-                                    text: "Unpreserve"
+                                    text: "Remove"
                                     enabled: !!modelData.id
                                     onClicked: {
                                         var R = root, t = modelData.iaId || modelData.title

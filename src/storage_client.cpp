@@ -19,6 +19,8 @@ void StorageClient::initStorage(const QString& dataDir)
     // subscribe BEFORE any IPC — the storageStart event is the real "ready for
     // transfers" signal (start() returning only means bootstrap began)
     m_transport->subscribeStarted([this](bool ok) {
+        if (ok)
+            m_everReady = true;
         setState(ok ? QStringLiteral("ready") : QStringLiteral("offline"));
     });
     m_transport->initAndStart(dataDir, [this](bool ok, const QString& error) {
@@ -28,8 +30,12 @@ void StorageClient::initStorage(const QString& dataDir)
             return;
         }
         // a pre-existing instance already went through its bootstrap
-        setState(error == QLatin1String("already_running") ? QStringLiteral("ready")
-                                                           : QStringLiteral("starting"));
+        if (error == QLatin1String("already_running")) {
+            m_everReady = true;
+            setState(QStringLiteral("ready"));
+        } else {
+            setState(QStringLiteral("starting"));
+        }
     });
 }
 
@@ -42,9 +48,12 @@ void StorageClient::pollHealth()
             setState(QStringLiteral("offline"));
             return;
         }
-        // never promote to ready from a mere ping — that's the event's job;
-        // recovering from offline lands in starting until storageStart says green
-        if (m_storageState == QLatin1String("offline"))
+        // a ping only promotes to ready when the node has been fully up before —
+        // a transient blip (busy fetch/upload failing one version() call) must
+        // restore green, while a never-started node stays yellow until storageStart
+        if (m_everReady)
+            setState(QStringLiteral("ready"));
+        else if (m_storageState == QLatin1String("offline"))
             setState(QStringLiteral("starting"));
         else
             emit healthChanged(m_storageState);   // unchanged, keep the UI in sync

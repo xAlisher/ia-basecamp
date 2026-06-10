@@ -110,6 +110,7 @@ private:
     bool m_initInFlight = false;
     bool m_uploading = false;        // storage contract: one upload in flight
     bool m_uploadSubscribed = false;
+    bool m_everReady = false;        // node completed bootstrap once — pings may restore green
 };
 
 #endif // STORAGE_CLIENT_H

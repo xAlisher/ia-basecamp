@@ -134,6 +134,22 @@ private slots:
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("offline"));
     }
 
+    void health_blipRestoresReadyAfterEverStarted()
+    {
+        // ready → one failed ping (busy node) → offline → next ping restores READY,
+        // not "starting" (the storageStart event never re-fires; this used to stick)
+        StorageClient c(&m_transport);
+        c.initStorage(QStringLiteral("/tmp/x"));
+        m_transport.startedCb(true);
+        QCOMPARE(c.storageState(), QStringLiteral("ready"));
+        m_transport.nodeUp = false;
+        c.pollHealth();
+        QCOMPARE(c.storageState(), QStringLiteral("offline"));
+        m_transport.nodeUp = true;
+        c.pollHealth();
+        QCOMPARE(c.storageState(), QStringLiteral("ready"));
+    }
+
     void health_pingKeepsReadyOnceEventArrived()
     {
         StorageClient c(&m_transport);
