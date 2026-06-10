@@ -52,6 +52,7 @@ signals:
 
 private:
     QNetworkReply* httpPost(const QString& path, const QString& query = QString());
+    void guardBodySize(QNetworkReply* reply);
 
     QNetworkAccessManager* m_net = nullptr;
     QString m_endpoint = QStringLiteral("http://127.0.0.1:5001");

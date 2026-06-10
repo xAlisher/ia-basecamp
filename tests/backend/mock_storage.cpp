@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -90,12 +91,24 @@ void MockStorage::handleConnection()
             body = R"({"error":"not found"})";
         }
 
-        const QByteArray resp = "HTTP/1.1 " + QByteArray::number(status)
+        const QByteArray head = "HTTP/1.1 " + QByteArray::number(status)
             + (status == 200 ? " OK" : " Error")
             + "\r\nContent-Type: application/json\r\nContent-Length: "
-            + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
-        sock->write(resp);
-        sock->disconnectFromHost();
+            + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n";
+        if (fragmentStream && path == QLatin1String("/api/v0/pin/add") && body.size() > 8) {
+            // split mid-JSON-line to exercise the client's readyRead/finished boundary
+            const int cut = body.size() / 2;
+            sock->write(head + body.left(cut));
+            sock->flush();
+            const QByteArray rest = body.mid(cut);
+            QTimer::singleShot(50, sock, [sock, rest] {
+                sock->write(rest);
+                sock->disconnectFromHost();
+            });
+        } else {
+            sock->write(head + body);
+            sock->disconnectFromHost();
+        }
     });
     connect(sock, &QTcpSocket::disconnected, sock, &QTcpSocket::deleteLater);
 }

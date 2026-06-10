@@ -70,6 +70,22 @@ private slots:
         QVERIFY(progress.count() >= 1 || m_storage->progressSteps == 0);
     }
 
+    void pin_fragmentedStream()
+    {
+        // mid-JSON-line fragmentation across readyRead events: every progress line
+        // must be seen exactly once and completion must still be detected
+        m_storage->progressSteps = 4;
+        m_storage->fragmentStream = true;
+        StorageClient* c = makeClient();
+        QSignalSpy progress(c, &StorageClient::pinProgress);
+        QSignalSpy done(c, &StorageClient::pinFinished);
+
+        c->pin(QStringLiteral("cid-frag"));
+        QVERIFY(done.wait(5000));
+        QCOMPARE(done.last().at(1).toBool(), true);
+        QCOMPARE(progress.count(), 4);   // no duplicates, no losses
+    }
+
     void pin_failureSurfacesError()
     {
         m_storage->failPins = true;

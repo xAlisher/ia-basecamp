@@ -21,6 +21,7 @@ public:
     int progressSteps = 2;       // {"Progress":n} lines emitted before success
     bool failPins = false;       // pin/add returns a Kubo-style error message
     bool refuse = false;         // dead endpoint
+    bool fragmentStream = false; // write pin/add body in delayed chunks (split mid-line)
     QStringList requestLog;      // "<path>?<query>" per request, in order
 
 private:

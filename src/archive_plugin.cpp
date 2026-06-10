@@ -219,8 +219,10 @@ QString ArchivePlugin::mirrorCollection(QString collectionId)
     const QString cid = m_lez->collectionCid(collectionId);
     if (cid.isEmpty())
         return fail(QStringLiteral("unknown_collection"));
-    if (m_lez->collectionState(collectionId) == QLatin1String("mirroring"))
-        return fail(QStringLiteral("mirror_in_progress"));
+    // one in-flight storage op per cid — a second mirror, or an unmirror racing a
+    // mirror, would corrupt the cid→collection ownership and the end state
+    if (m_cidToCollection.contains(cid))
+        return fail(QStringLiteral("storage_busy"));
     syncStorageEndpoint();
     if (m_storage->endpoint().isEmpty())
         return fail(QStringLiteral("no_storage_endpoint"));
@@ -237,6 +239,8 @@ QString ArchivePlugin::unmirrorCollection(QString collectionId)
     const QString cid = m_lez->collectionCid(collectionId);
     if (cid.isEmpty())
         return fail(QStringLiteral("unknown_collection"));
+    if (m_cidToCollection.contains(cid))
+        return fail(QStringLiteral("storage_busy"));
     syncStorageEndpoint();
     if (m_storage->endpoint().isEmpty())
         return fail(QStringLiteral("no_storage_endpoint"));

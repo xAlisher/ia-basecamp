@@ -28,6 +28,17 @@ QString StorageClient::resolveEndpoint(const QString& mode, const QString& gatew
     return gatewayStorageUrl;   // delegate (default): the trusted gateway pins
 }
 
+// Abort before buffering an oversized body — a post-read .left() cap would already
+// have paid the allocation. Pin's streaming consumer drains continuously, so its
+// buffered watermark stays small and this guard never fires on legitimate streams.
+void StorageClient::guardBodySize(QNetworkReply* reply)
+{
+    connect(reply, &QNetworkReply::readyRead, this, [reply] {
+        if (reply->bytesAvailable() > kMaxBodyBytes)
+            reply->abort();
+    });
+}
+
 QNetworkReply* StorageClient::httpPost(const QString& path, const QString& query)
 {
     QUrl url(m_endpoint);
@@ -48,6 +59,7 @@ QNetworkReply* StorageClient::httpPost(const QString& path, const QString& query
 void StorageClient::pollHealth()
 {
     QNetworkReply* reply = httpPost(QStringLiteral("/api/v0/version"));
+    guardBodySize(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
         const bool up = reply->error() == QNetworkReply::NoError;
@@ -88,6 +100,9 @@ void StorageClient::pin(const QString& cid)
         while (reply->canReadLine())
             consumeLine(reply->readLine());
     });
+    // after draining whole lines, anything still buffered is one partial line —
+    // a line that alone exceeds the cap is hostile
+    guardBodySize(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, cid, pinnedSeen, errMsg, consumeLine] {
         reply->deleteLater();
         m_pinning.remove(cid);
@@ -111,9 +126,10 @@ void StorageClient::unpin(const QString& cid)
     QUrlQuery q;
     q.addQueryItem(QStringLiteral("arg"), cid);
     QNetworkReply* reply = httpPost(QStringLiteral("/api/v0/pin/rm"), q.toString());
+    guardBodySize(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, cid] {
         reply->deleteLater();
-        const QByteArray body = reply->readAll().left(kMaxBodyBytes);
+        const QByteArray body = reply->readAll();
         if (reply->error() == QNetworkReply::NoError) {
             emit unpinFinished(cid, true, QString());
             return;
@@ -123,7 +139,11 @@ void StorageClient::unpin(const QString& cid)
             emit unpinFinished(cid, true, QString());
             return;
         }
-        emit unpinFinished(cid, false, QStringLiteral("storage_unreachable"));
+        // server-side failures keep Kubo's message (same fidelity as pin)
+        const QString msg =
+            QJsonDocument::fromJson(body).object().value(QLatin1String("Message")).toString();
+        emit unpinFinished(cid, false,
+                           msg.isEmpty() ? QStringLiteral("storage_unreachable") : msg);
     });
 }
 
@@ -132,6 +152,7 @@ void StorageClient::queryPinned(const QString& cid)
     QUrlQuery q;
     q.addQueryItem(QStringLiteral("arg"), cid);
     QNetworkReply* reply = httpPost(QStringLiteral("/api/v0/pin/ls"), q.toString());
+    guardBodySize(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, cid] {
         reply->deleteLater();
         const QByteArray body = reply->readAll().left(kMaxBodyBytes);
@@ -145,6 +166,7 @@ void StorageClient::queryPinned(const QString& cid)
 void StorageClient::queryRepoStat()
 {
     QNetworkReply* reply = httpPost(QStringLiteral("/api/v0/repo/stat"));
+    guardBodySize(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError)
