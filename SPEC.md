@@ -50,8 +50,9 @@ A single **`ui_qml` module with a compiled C++ backend** (the `logos-delivery-de
 
 - **Channel** = an LEZ zone / account. Permanent, append-only. Identified by a `channelId`/account.
 - **Collection** = one inscription (`ChannelInscribe` op) in the channel: `{ id, title, cid, sizeBytes,
-  items, inscribedAt, txHash, curator }`. The `cid` points at the content on Storage; `txHash` is the
-  verifiable provenance (explorer link).
+  items, thumbnail, inscribedAt, txHash, curator }`. The `cid` points at the content on Storage;
+  `txHash` is the verifiable provenance (explorer link); **`thumbnail`** is a small cover-image
+  reference (CID/URL) the curator inscribes in the manifest — used by the share cards (§12).
 - **Mirror state** (local, per collection): `available | mirroring | mirrored | error`.
 
 ## 4. Read path (the channel is permanent)
@@ -111,10 +112,15 @@ class Archive {
     SLOT(QString refreshChannel(QString channelId))  // re-read inscriptions (finalized only)
 
     // collections + preserve (Storage)
-    SLOT(QString getCollections(QString channelId))  // "" = all followed
+    SLOT(QString getCollections(QString channelId))  // "" = all followed; rows include `thumbnail`
     SLOT(QString mirrorCollection(QString collectionId))
     SLOT(QString unmirrorCollection(QString collectionId))
     SLOT(QString getMirrorStatus(QString collectionId))
+
+    // share cards (§12 — growth)
+    SLOT(QString getShareData(QString scope))        // scope="me" | collectionId → {title,totalGB,count,items:[{name,sizeGB,thumbnail}]}
+    SLOT(QString saveShareCard(QString pngBase64, QString name))  // QML grabs the rendered card → backend writes PNG → {ok,path}
+    SLOT(QString revealCard(QString path))           // open the folder / share intent
 }
 ```
 
@@ -126,6 +132,7 @@ class Archive {
 - **Collections tab:** the curated list — each row: title · size · provenance link · **Preserve** button
   + progress bar. Header counter: *"you're preserving N collections · X GB"* — the campaign's hook.
 - **Activity log** (keycard ActivityLog pattern): timestamped follows / mirrors / errors / sync warnings.
+- **Share** button (on the summary counter + per collection) → renders + exports a card to post (§12).
 
 ## 8. Module structure
 
@@ -175,3 +182,46 @@ ia-basecamp/                       (repo; module name: "archive")
 - **P3 — UI:** pills (with sync-lag), settings cogwheel, Channels + Collections tabs, activity log.
 - **P4 — Federation + resilience:** gateway list + failover; surface #519 sync-lag to the user.
 - **P5 — Package + cross-platform:** LGX for linux-amd64 **and** arm64 + darwin-arm64; catalog entry.
+- **P6 — Shareable cards (growth):** the `ShareCard` render-to-image + `getShareData`/`saveShareCard`
+  /`revealCard` + the Share button (§12).
+
+## 12. Shareable preservation cards (growth hook)
+
+The campaign spreads when contributors *show off*. Every preserver can export a polished image card —
+**"I'm preserving 4.2 GB of the Internet Archive"** with collection names + cover thumbnails, sized for
+X/Twitter, Mastodon, etc. Each share is an ad + a recruit. This is the module's organic-growth engine.
+
+**Two card types:**
+- **Contribution card** (`scope="me"`): the user's total — *N collections · X GB preserved* — a montage
+  of featured collections' thumbnails + campaign branding + a join link/QR.
+- **Collection card** (`scope=<collectionId>`): one collection — title, size, cover thumbnail, *"preserved
+  & verifiable on-chain"* + the provenance link.
+
+**Rendering (QML-side, zero deps):** a hidden, beautifully-styled `ShareCard` Item driven by
+`getShareData(scope)` (names, sizes, `thumbnail` refs, totals). Thumbnails load via the Storage/gateway
+(the inscribed `thumbnail` CID) with an IA fallback. The **Share** button → `grabToImage` →
+`saveShareCard(pngBase64, name)` (backend writes the PNG to a known folder) → `revealCard(path)` opens
+it / fires a share intent. No native image libs — pure QML render-to-image, so it stays cross-platform.
+
+**Design:** 1200×675 (X ratio); dark theme + campaign logo; thumbnail grid (1–6 covers, graceful with
+missing thumbnails → tasteful placeholder); a big **"X GB"** number; a short verifiable line ("preserved
+on the Logos Execution Zone"). Screenshot-clean, no PII — the user is "anonymous preserver" or an
+optional handle.
+
+**Curator requirement:** the inscription manifest should carry a `thumbnail` (small cover-image CID) per
+collection — that's what makes the share pop. Absent → a placeholder.
+
+## 13. Testing (every phase ships tests — no issue closes without them)
+
+Per fieldcraft (verify before claiming). Two harnesses, mirroring radio:
+
+- **Backend tests (headless):** the backend is a pure HTTP/JSON-RPC client, so tests run it against a
+  **local mock** indexer + Storage (a tiny `QHttpServer`/fixture serving canned JSON-RPC + CIDs). No
+  testnet, no network, deterministic. Covers: LEZ decode (`getTransactionsByAccount` → `ChannelInscribe`
+  → collection records), finality filtering, follow/refresh state, sync-lag computation, mirror flow
+  (delegate vs local), and `getShareData`/`saveShareCard` (PNG actually written).
+- **UI integration test:** `nix build .#integration-test` (logos-standalone-app) — QML loads,
+  `logos.module("archive")` resolves the replica, pills/tabs/ShareCard instantiate.
+
+**Rule:** each phase issue (P0–P6) ships its tests in the same PR and lists them in its checklist;
+"Verified: build Y/N, tests Y/N" goes in the handoff. A mock-fixture lib lands in P1 and grows per phase.
