@@ -54,3 +54,24 @@ test extracted → docs/skills/async-scan-generation-guard.md.
 60-line QTcpServer mock (33ms, no display, no network) + one env-gated live test
 (`ARCHIVE_LIVE_NODE=…`) that ran the production client against the real chain and decoded the
 spike's exact on-chain artifact. Deterministic for CI, live for runtime proof — both green.
+
+## 2026-06-10 — P2 (issue #4)
+
+**Fail** · live pin test failed instantly while all 10 mock tests were green · Kubo's CSRF
+guard 403s Qt's default `Mozilla/5.0` User-Agent; the mock encoded my assumptions, not the
+server's policy. Root cause: external-API behavior verified only against a self-written mock.
+Rule: fidelity-check the mock against the real service once, and keep one env-gated live test
+per external API. → basecamp-skill `kubo-rpc-qt-user-agent`.
+
+**Fail** · first pin-stream parser ate the success line · the readyRead drain consumed
+`{"Pins":...}` looking only for Progress, so `finished` never saw it — mock test caught it.
+Root cause: two handlers splitting one stream without shared outcome state; fixed with a
+single consumeLine closure shared by both.
+
+**Win** · verified the real Kubo response shapes with a 5-minute throwaway daemon
+(`ipfs init --profile test` + fixed API port + curl) before trusting the mock — that session
+also produced the CID used by the live test.
+
+**Win** · Senty caught the cid→collection single-slot ownership races (two collections sharing
+a cid; unmirror racing a mirror) — the same async-ownership class as P1's finding. The
+storage_busy one-op-per-cid guard is simpler than any bookkeeping that tries to allow the race.
