@@ -1,5 +1,7 @@
 #include "mock_node.h"
 
+#include <memory>
+
 #include <QJsonDocument>
 #include <QTcpSocket>
 #include <QUrl>
@@ -28,8 +30,12 @@ void MockNode::handleConnection()
         sock->deleteLater();
         return;
     }
-    connect(sock, &QTcpSocket::readyRead, this, [this, sock] {
-        const QByteArray req = sock->readAll();
+    auto buffer = std::make_shared<QByteArray>();
+    connect(sock, &QTcpSocket::readyRead, this, [this, sock, buffer] {
+        buffer->append(sock->readAll());
+        if (!buffer->contains("\r\n\r\n"))
+            return;   // wait for the full (fragmented) request head
+        const QByteArray req = *buffer;
         const int lineEnd = req.indexOf("\r\n");
         const QList<QByteArray> parts = req.left(lineEnd).split(' ');
         if (parts.size() < 2)

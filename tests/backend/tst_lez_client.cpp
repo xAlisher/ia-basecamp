@@ -73,21 +73,25 @@ private:
         return c;
     }
 
-    static bool waitForScan(LezClient* c, const QString& channelId, int timeoutMs = 5000)
-    {
-        QSignalSpy spy(c, &LezClient::scanFinished);
-        QElapsedTimer t;
-        t.start();
-        while (t.elapsed() < timeoutMs) {
-            if (spy.wait(200)) {
+    // Attach BEFORE triggering follow/refresh — a spy created after the async kick-off
+    // can miss a fast scanFinished and time out spuriously.
+    struct ScanWaiter {
+        QSignalSpy spy;
+        explicit ScanWaiter(LezClient* c) : spy(c, &LezClient::scanFinished) {}
+        bool wait(const QString& channelId, int timeoutMs = 5000)
+        {
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < timeoutMs) {
                 for (const QList<QVariant>& args : spy)
                     if (args.at(0).toString() == channelId)
                         return true;
                 spy.clear();
+                spy.wait(200);
             }
+            return false;
         }
-        return false;
-    }
+    };
 
 private slots:
     void init()
@@ -231,10 +235,11 @@ private slots:
         m_node->blocks = QJsonArray{ block(8000, "tx-1", ops1), block(9500, "tx-2", ops2) };
 
         LezClient* c = makeClient();
+        ScanWaiter waiter(c);
         QString err;
         const QString id = c->followChannel(kChannel + "@7000", &err);
         QCOMPARE(id, kChannel);
-        QVERIFY(waitForScan(c, kChannel));
+        QVERIFY(waiter.wait(kChannel));
 
         const QJsonArray cols = c->collectionsJson();
         QCOMPARE(cols.size(), 2);
@@ -262,8 +267,9 @@ private slots:
         m_node->blocks = QJsonArray{ block(8000, "tx-1", ops1) };
 
         LezClient* c = makeClient();
+        ScanWaiter waiter(c);
         c->followChannel(kChannel + "@7000");
-        QVERIFY(waitForScan(c, kChannel));
+        QVERIFY(waiter.wait(kChannel));
         QCOMPARE(c->collectionsJson().size(), 1);
 
         // chain advances; a new inscription lands past the old lib
@@ -273,8 +279,9 @@ private slots:
                                     { "tip", "t" },    { "mode", "Online" } };
 
         const int before = m_node->requestCount;
+        ScanWaiter waiter2(c);
         QVERIFY(c->refreshChannel(kChannel));
-        QVERIFY(waitForScan(c, kChannel));
+        QVERIFY(waiter2.wait(kChannel));
         QCOMPARE(c->collectionsJson().size(), 2);
         // resumed from the cursor: only info + the delta pages, not a rescan of 7000+
         QVERIFY(m_node->requestCount - before <= 3);
@@ -285,12 +292,33 @@ private slots:
         QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 1), "sig") };
         m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
         LezClient* c = makeClient();
+        ScanWaiter waiter(c);
         c->followChannel(kChannel + "@8000");
-        QVERIFY(waitForScan(c, kChannel));
+        QVERIFY(waiter.wait(kChannel));
         QVERIFY(c->unfollowChannel(kChannel));
         QCOMPARE(c->collectionsJson().size(), 0);
         QCOMPARE(c->channelsJson().size(), 0);
         QVERIFY(!c->unfollowChannel(kChannel));
+    }
+
+    void refollow_whileScanInFlight()
+    {
+        // Senty P1 finding: an in-flight scan surviving unfollow must not adopt
+        // (or corrupt) a re-created channel of the same id.
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Old", "cid-1", 1), "sig") };
+        m_node->blocks = QJsonArray{ block(1000, "tx-1", ops) };
+
+        LezClient* c = makeClient();
+        ScanWaiter waiter(c);
+        c->followChannel(kChannel + "@500");        // multi-page scan begins (lib 10000)
+        QVERIFY(c->unfollowChannel(kChannel));      // while page 1 is in flight
+        QCOMPARE(c->followChannel(kChannel + "@9000"), kChannel);  // re-follow, new generation
+
+        QVERIFY(waiter.wait(kChannel, 10000));
+        // the new scan starts at 9000 — the old generation's tx-1 (slot 1000) must not leak in
+        QCOMPARE(c->collectionsJson().size(), 0);
+        QCOMPARE(c->channelsJson().size(), 1);
+        QCOMPARE(c->channelsJson()[0].toObject().value("synced").toBool(), true);
     }
 
     void scan_multiPage()
@@ -301,8 +329,9 @@ private slots:
         m_node->blocks = QJsonArray{ block(1000, "tx-1", ops1), block(9900, "tx-2", ops2) };
 
         LezClient* c = makeClient();
+        ScanWaiter waiter(c);
         c->followChannel(kChannel + "@500");
-        QVERIFY(waitForScan(c, kChannel, 10000));
+        QVERIFY(waiter.wait(kChannel, 10000));
         QCOMPARE(c->collectionsJson().size(), 2);
     }
 
@@ -314,9 +343,10 @@ private slots:
         m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
 
         LezClient* c = makeClient();
+        ScanWaiter waiter(c);
         c->setPreserveMode(QStringLiteral("local"));
         c->followChannel(kChannel + "@8000");
-        QVERIFY(waitForScan(c, kChannel));
+        QVERIFY(waiter.wait(kChannel));
 
         LezClient* c2 = new LezClient(this);
         c2->loadState();

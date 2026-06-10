@@ -46,6 +46,7 @@ public:
         qint64  lastInscription = 0;
         QString curator;
         bool    synced = false;    // cursor caught up to lib_slot at last refresh
+        qint64  generation = 0;    // bumped on follow — stale async callbacks self-discard
         QVector<Collection> collections;
     };
 
@@ -53,6 +54,9 @@ public:
     static constexpr int    kMaxPagesPerRefresh = 100;
     static constexpr qint64 kLagDegradedThreshold = 1200;  // ~2× the normal in-flight window
     static constexpr int    kHttpTimeoutMs = 10000;
+    // Defensive caps on untrusted gateway responses
+    static constexpr qint64 kMaxBlocksBodyBytes = 32 * 1024 * 1024;
+    static constexpr int    kMaxInscriptionBytes = 256 * 1024;
 
     explicit LezClient(QObject* parent = nullptr);
 
@@ -98,8 +102,8 @@ signals:
 
 private:
     void startScan(const QString& channelId);
-    void scanNextPage(const QString& channelId, qint64 libSlot, int pagesLeft);
-    QNetworkReply* httpGet(const QString& path);
+    void scanNextPage(const QString& channelId, qint64 generation, qint64 libSlot, int pagesLeft);
+    QNetworkReply* httpGet(const QString& path, const QString& query = QString());
     void failOver(const QString& code);
 
     QNetworkAccessManager* m_net = nullptr;
@@ -111,7 +115,8 @@ private:
     qint64 m_syncLag = 0;
 
     QMap<QString, Channel> m_channels;
-    QSet<QString> m_scanning;        // reentrancy guard, one scan per channel
+    QMap<QString, qint64> m_scanning;   // channelId → generation that owns the in-flight scan
+    qint64 m_generationCounter = 0;
 };
 
 #endif // LEZ_CLIENT_H

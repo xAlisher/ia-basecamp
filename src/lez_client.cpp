@@ -11,6 +11,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
@@ -48,10 +49,16 @@ void LezClient::setPreserveMode(const QString& mode)
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
 
-QNetworkReply* LezClient::httpGet(const QString& path)
+QNetworkReply* LezClient::httpGet(const QString& path, const QString& query)
 {
     const Gateway& gw = m_gateways.at(m_active);
-    QUrl url(gw.nodeUrl + path);
+    QUrl url(gw.nodeUrl);
+    QString base = url.path();
+    while (base.endsWith(QLatin1Char('/')))
+        base.chop(1);
+    url.setPath(base + path);          // structured join — no raw string concatenation
+    if (!query.isEmpty())
+        url.setQuery(query);
     QNetworkRequest req(url);
     req.setTransferTimeout(kHttpTimeoutMs);
     return m_net->get(req);
@@ -77,7 +84,10 @@ void LezClient::pollHealth()
             failOver(QStringLiteral("gateway_unreachable"));
             return;
         }
-        const QJsonObject info = QJsonDocument::fromJson(reply->readAll()).object();
+        const QByteArray body = reply->readAll();
+        const QJsonObject info = body.size() <= 1024 * 1024
+                                     ? QJsonDocument::fromJson(body).object()
+                                     : QJsonObject{};
         if (!info.contains(QLatin1String("lib_slot"))) {
             failOver(QStringLiteral("gateway_bad_response"));
             return;
@@ -100,18 +110,18 @@ QString LezClient::parseChannelRef(const QString& ref, qint64* startSlot, QStrin
 {
     if (startSlot)
         *startSlot = 0;
-    static const QRegularExpression hexRe(QStringLiteral("[0-9a-fA-F]{64}"));
+    // "@<startSlot>" only counts when anchored to the channel id itself —
+    // an unrelated @123 elsewhere in a pasted URL must not become a slot hint
+    static const QRegularExpression hexRe(QStringLiteral("([0-9a-fA-F]{64})(?:@(\\d+))?"));
     const QRegularExpressionMatch m = hexRe.match(ref);
     if (!m.hasMatch()) {
         if (errorCode)
             *errorCode = QStringLiteral("invalid_channel_ref");
         return {};
     }
-    static const QRegularExpression slotRe(QStringLiteral("@(\\d+)"));
-    const QRegularExpressionMatch sm = slotRe.match(ref);
-    if (sm.hasMatch() && startSlot)
-        *startSlot = sm.captured(1).toLongLong();
-    return m.captured(0).toLower();
+    if (startSlot && !m.captured(2).isEmpty())
+        *startSlot = m.captured(2).toLongLong();
+    return m.captured(1).toLower();
 }
 
 // ── inscription decode ───────────────────────────────────────────────────────
@@ -146,8 +156,10 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
 
                 // inscription = byte array → UTF-8 JSON manifest (non-JSON payloads are
                 // some other producer's data on this channel — skip, don't fail the scan)
-                QByteArray bytes;
                 const QJsonArray arr = payload.value(QLatin1String("inscription")).toArray();
+                if (arr.size() > kMaxInscriptionBytes)
+                    continue;   // no legitimate manifest is this big — refuse the allocation
+                QByteArray bytes;
                 bytes.reserve(arr.size());
                 for (const QJsonValue& byte : arr)
                     bytes.append(static_cast<char>(byte.toInt()));
@@ -198,6 +210,7 @@ QString LezClient::followChannel(const QString& ref, QString* errorCode)
     Channel ch;
     ch.channelId = channelId;
     ch.startSlot = startSlot;
+    ch.generation = ++m_generationCounter;
     m_channels.insert(channelId, ch);
     saveState();
     emit channelsChanged();
@@ -207,8 +220,10 @@ QString LezClient::followChannel(const QString& ref, QString* errorCode)
 
 bool LezClient::unfollowChannel(const QString& channelId)
 {
-    if (m_channels.remove(channelId.toLower()) == 0)
+    const QString id = channelId.toLower();
+    if (m_channels.remove(id) == 0)
         return false;
+    m_scanning.remove(id);   // orphan any in-flight scan; its callbacks self-discard
     saveState();
     emit channelsChanged();
     emit collectionsChanged();
@@ -228,11 +243,14 @@ void LezClient::startScan(const QString& channelId)
 {
     if (m_scanning.contains(channelId))
         return;
-    m_scanning.insert(channelId);
+    const qint64 generation = m_channels.value(channelId).generation;
+    m_scanning.insert(channelId, generation);
 
     QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/info"));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, channelId] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, channelId, generation] {
         reply->deleteLater();
+        if (m_scanning.value(channelId, -1) != generation)
+            return;   // unfollowed (or re-followed) while in flight — not ours anymore
         if (reply->error() != QNetworkReply::NoError) {
             m_scanning.remove(channelId);
             failOver(QStringLiteral("gateway_unreachable"));
@@ -247,16 +265,16 @@ void LezClient::startScan(const QString& channelId)
             emit scanFinished(channelId, false);
             return;
         }
-        scanNextPage(channelId, libSlot, kMaxPagesPerRefresh);
+        scanNextPage(channelId, generation, libSlot, kMaxPagesPerRefresh);
     });
 }
 
-void LezClient::scanNextPage(const QString& channelId, qint64 libSlot, int pagesLeft)
+void LezClient::scanNextPage(const QString& channelId, qint64 generation, qint64 libSlot,
+                             int pagesLeft)
 {
-    if (!m_channels.contains(channelId)) {   // unfollowed mid-scan
-        m_scanning.remove(channelId);
+    if (m_scanning.value(channelId, -1) != generation)
         return;
-    }
+    Q_ASSERT(m_channels.contains(channelId));
     Channel& ch = m_channels[channelId];
     const qint64 from = ch.cursor > 0 ? ch.cursor + 1 : ch.startSlot;
     if (from > libSlot || pagesLeft <= 0) {
@@ -272,14 +290,12 @@ void LezClient::scanNextPage(const QString& channelId, qint64 libSlot, int pages
     QUrlQuery q;
     q.addQueryItem(QStringLiteral("slot_from"), QString::number(from));
     q.addQueryItem(QStringLiteral("slot_to"), QString::number(to));
-    QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/blocks?") + q.toString());
+    QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/blocks"), q.toString());
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, channelId, libSlot, pagesLeft, to] {
+            [this, reply, channelId, generation, libSlot, pagesLeft, to] {
         reply->deleteLater();
-        if (!m_channels.contains(channelId)) {
-            m_scanning.remove(channelId);
+        if (m_scanning.value(channelId, -1) != generation)
             return;
-        }
         if (reply->error() != QNetworkReply::NoError) {
             m_scanning.remove(channelId);
             saveState();   // keep the cursor we reached
@@ -287,9 +303,18 @@ void LezClient::scanNextPage(const QString& channelId, qint64 libSlot, int pages
             emit scanFinished(channelId, false);
             return;
         }
-        const QJsonArray blocks = QJsonDocument::fromJson(reply->readAll()).array();
+        const QByteArray body = reply->readAll();
+        if (body.size() > kMaxBlocksBodyBytes) {
+            m_scanning.remove(channelId);
+            saveState();
+            failOver(QStringLiteral("gateway_bad_response"));
+            emit scanFinished(channelId, false);
+            return;
+        }
+        const QJsonArray blocks = QJsonDocument::fromJson(body).array();
         const QVector<Collection> found = extractCollections(blocks, channelId, libSlot);
 
+        // reacquire after the parse — never hold the reference across anything async
         Channel& ch = m_channels[channelId];
         bool added = false;
         for (const Collection& c : found) {
@@ -305,7 +330,7 @@ void LezClient::scanNextPage(const QString& channelId, qint64 libSlot, int pages
         ch.cursor = to;
         if (added)
             emit collectionsChanged();
-        scanNextPage(channelId, libSlot, pagesLeft - 1);
+        scanNextPage(channelId, generation, libSlot, pagesLeft - 1);
     });
 }
 
@@ -417,9 +442,11 @@ void LezClient::saveState() const
     };
 
     QDir().mkpath(QFileInfo(stateFilePath()).path());
-    QFile f(stateFilePath());
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    QSaveFile f(stateFilePath());   // atomic: write-to-temp + rename, no torn states
+    if (f.open(QIODevice::WriteOnly)) {
         f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+        f.commit();
+    }
 }
 
 void LezClient::loadState()
@@ -427,7 +454,17 @@ void LezClient::loadState()
     QFile f(stateFilePath());
     if (!f.open(QIODevice::ReadOnly))
         return;
-    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    QJsonParseError parseErr{};
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &parseErr);
+    if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) {
+        // corrupt state is preserved for inspection, never silently discarded
+        f.close();
+        QFile::remove(stateFilePath() + QStringLiteral(".corrupt"));
+        QFile::rename(stateFilePath(), stateFilePath() + QStringLiteral(".corrupt"));
+        emit errorOccurred(QStringLiteral("state_corrupt"));
+        return;
+    }
+    const QJsonObject root = doc.object();
 
     QList<Gateway> gws;
     for (const QJsonValue& gv : root.value(QLatin1String("gateways")).toArray()) {

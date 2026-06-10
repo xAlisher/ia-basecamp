@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTimer>
+#include <QUrl>
 #include <QDebug>
 
 namespace {
@@ -87,6 +88,11 @@ QString ArchivePlugin::setGateways(QString jsonList)
             node = o.value(QStringLiteral("indexerUrl")).toString();
         if (node.isEmpty())
             return fail(QStringLiteral("gateway_missing_node_url"));
+        const QUrl u(node);
+        if (!u.isValid() || u.host().isEmpty()
+            || (u.scheme() != QLatin1String("http") && u.scheme() != QLatin1String("https"))
+            || !u.query().isEmpty() || !u.fragment().isEmpty())
+            return fail(QStringLiteral("invalid_gateway_url"));
         gws.append({ node, o.value(QStringLiteral("storageUrl")).toString() });
     }
     if (gws.isEmpty())
