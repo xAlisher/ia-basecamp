@@ -38,7 +38,17 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     m_logosAPI = api;
     m_lez = new LezClient(this);           // gateway node reads (SPEC §4.1) — pure HTTP
     // Preserve goes ONLY to Logos Storage via the platform storage_module (stash's path).
-    m_transport.reset(new LogosStorageTransport(api));
+    // Constructing the typed client calls LogosAPI::getClient on the HOST's LogosAPI
+    // object — on a ui-host whose liblogos revision differs from the builder's SDK this
+    // reads garbage and throws bad_alloc (see docs/spikes/uihost-getclient-abi-crash.md).
+    // The module must survive that: degrade to offline storage, never kill the host.
+    try {
+        m_transport.reset(new LogosStorageTransport(api));
+    } catch (const std::exception& e) {
+        qWarning() << "ArchivePlugin: storage transport unavailable (SDK/host mismatch):"
+                   << e.what();
+        m_transport.reset(new NullStorageTransport());
+    }
     m_storage = new StorageClient(m_transport.get(), this);
 
     connect(m_lez, &LezClient::healthChanged, this, [this](const QString& state, qint64 lag) {

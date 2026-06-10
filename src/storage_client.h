@@ -26,6 +26,31 @@ public:
     virtual void space(std::function<void(bool ok, qint64 usedBytes)> cb) = 0;
 };
 
+// Degradation fallback: used when the real transport cannot even be constructed
+// (SDK/host ABI mismatch — see docs/spikes/uihost-getclient-abi-crash.md). The module
+// must load and read channels regardless; storage simply reports offline.
+class NullStorageTransport : public StorageTransport {
+public:
+    void initAndStart(const QString&, BoolCb cb) override
+    {
+        cb(false, QStringLiteral("storage_unavailable"));
+    }
+    void ping(BoolCb cb) override { cb(false, QStringLiteral("storage_unavailable")); }
+    void fetch(const QString&, BoolCb cb) override
+    {
+        cb(false, QStringLiteral("storage_unavailable"));
+    }
+    void removeCid(const QString&, BoolCb cb) override
+    {
+        cb(false, QStringLiteral("storage_unavailable"));
+    }
+    void exists(const QString&, std::function<void(bool, bool)> cb) override
+    {
+        cb(false, false);
+    }
+    void space(std::function<void(bool, qint64)> cb) override { cb(false, 0); }
+};
+
 // Same signal surface as the P2 client — the plugin wiring and .rep semantics are
 // unchanged; only where the bytes go changed.
 class StorageClient : public QObject {
