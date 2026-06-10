@@ -359,6 +359,18 @@ private slots:
         QVERIFY(id.isEmpty());
     }
 
+    void deriveIaCandidates_ambiguousHyphens()
+    {
+        // "keeper-taxi-turvy-taxi-turvy.mpeg": the true split is taxi-turvy /
+        // taxi-turvy.mpeg, but hyphens before the dot make several plausible splits
+        const QStringList c = LezClient::deriveIaCandidates("zDvZ",
+            QString::fromUtf8("Logos Storage: keeper-taxi-turvy-taxi-turvy.mpeg \u2192 zDvZ"));
+        QVERIFY(c.size() >= 2);
+        QCOMPARE(c[0], QStringLiteral("taxi-turvy-taxi|turvy.mpeg"));   // first guess
+        QVERIFY(c.contains(QStringLiteral("taxi-turvy|taxi-turvy.mpeg")));   // the truth
+        QVERIFY(c.size() <= 4);   // archive.org hammering cap
+    }
+
     void state_legacyRowsGainIaRefAndRetry()
     {
         // simulate a state file written before iaId/iaFile existed, with an error row

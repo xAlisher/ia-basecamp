@@ -103,6 +103,9 @@ public:
     // exposed for tests
     static void deriveIaRef(const QString& cid, const QString& label,
                             QString* iaId, QString* iaFile);
+    // all plausible (id, file) splits, most-likely first, as "id|file" strings —
+    // keeper's "keeper-{id}-{file}" is ambiguous when the filename contains '-'
+    static QStringList deriveIaCandidates(const QString& cid, const QString& label);
     static QString parseChannelRef(const QString& ref, qint64* startSlot, QString* errorCode);
     static QVector<Collection> extractCollections(const QJsonArray& blocks,
                                                   const QString& channelId, qint64 libSlot);

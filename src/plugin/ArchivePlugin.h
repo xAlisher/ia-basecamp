@@ -91,8 +91,10 @@ private:
     // preserve-by-reseed (keeper's flow): fetch failed → download the file from the
     // Internet Archive → upload into Logos Storage (we become the provider)
     void startReseed(const QString& collectionId, const QString& cid);
+    void tryReseedCandidate(const QString& collectionId);   // walks m_reseedCandidates
     QNetworkAccessManager* m_nam = nullptr;
     QString m_reseedCollectionId;   // one re-seed at a time (upload contract)
     QString m_reseedCid;
     QString m_reseedTmpPath;
+    QStringList m_reseedCandidates; // "id|file" splits still untried
 };

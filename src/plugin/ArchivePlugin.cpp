@@ -258,17 +258,18 @@ QString ArchivePlugin::setChannelLabel(const QString& channelId, const QString& 
 
 void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
 {
-    // resolve the IA source from the inscription's keeper conventions
-    QString iaId, iaFile;
+    // resolve the IA source candidates from the inscription's keeper conventions
+    QString title, manCid;
     for (const QJsonValue& v : m_lez->collectionsJson()) {
         const QJsonObject c = v.toObject();
         if (c.value(QStringLiteral("id")).toString() == collectionId) {
-            iaId = c.value(QStringLiteral("iaId")).toString();
-            iaFile = c.value(QStringLiteral("iaFile")).toString();
+            title = c.value(QStringLiteral("title")).toString();
+            manCid = c.value(QStringLiteral("cid")).toString();
             break;
         }
     }
-    if (iaId.isEmpty() || iaFile.isEmpty()) {
+    const QStringList candidates = LezClient::deriveIaCandidates(manCid, title);
+    if (candidates.isEmpty() || candidates.first().endsWith(QLatin1Char('|'))) {
         m_lez->setCollectionState(collectionId, QStringLiteral("error"));
         m_lastError = QStringLiteral("not_on_network_and_no_ia_source");
         return;
@@ -280,6 +281,15 @@ void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
     }
     m_reseedCollectionId = collectionId;
     m_reseedCid = cid;
+    m_reseedCandidates = candidates;
+    tryReseedCandidate(collectionId);
+}
+
+void ArchivePlugin::tryReseedCandidate(const QString& collectionId)
+{
+    const QStringList parts = m_reseedCandidates.takeFirst().split(QLatin1Char('|'));
+    const QString iaId = parts.value(0);
+    const QString iaFile = parts.value(1);
 
     if (!m_nam)
         m_nam = new QNetworkAccessManager(this);
@@ -316,20 +326,23 @@ void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             QFile::remove(tmpPath);
-            m_reseedCollectionId.clear();
             m_reseedTmpPath.clear();
-            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
             const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            // 404s and dead dn-node timeouts = the file isn't really on IA
-            // (keeper-synthetic entries like metadata.json) — say so plainly
-            const bool notAvailable = http == 404
+            qWarning() << "ArchivePlugin: reseed candidate failed for" << collectionId
+                       << "http" << http << reply->errorString();
+            // the keeper label split is ambiguous — try the next (id,file) boundary
+            if (!m_reseedCandidates.isEmpty()) {
+                tryReseedCandidate(collectionId);
+                return;
+            }
+            m_reseedCollectionId.clear();
+            const bool notAvailable = http == 404 || http == 503
                 || reply->error() == QNetworkReply::ContentNotFoundError
                 || reply->error() == QNetworkReply::OperationCanceledError;
+            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
             m_lastError = notAvailable
                 ? QStringLiteral("file not available on the Internet Archive")
                 : QStringLiteral("ia_download_failed: ") + reply->errorString();
-            qWarning() << "ArchivePlugin: reseed failed for" << collectionId
-                       << "http" << http << reply->errorString();
             return;
         }
         qInfo() << "ArchivePlugin: reseed downloaded" << out->size() << "bytes — uploading";

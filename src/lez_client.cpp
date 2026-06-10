@@ -237,6 +237,37 @@ void LezClient::deriveIaRef(const QString& cid, const QString& label,
     *iaFile = rest.mid(split + 1);
 }
 
+QStringList LezClient::deriveIaCandidates(const QString& cid, const QString& label)
+{
+    QStringList out;
+    if (cid.startsWith(QLatin1String("ia:"))) {
+        out << cid.mid(3) + QStringLiteral("|");
+        return out;
+    }
+    static const QRegularExpression prefixRe(
+        QStringLiteral("^Logos Storage: keeper-(.+?)(?:\\s*\\x{2192}.*)?$"));
+    const QRegularExpressionMatch m = prefixRe.match(label);
+    if (!m.hasMatch())
+        return out;
+    const QString rest = m.captured(1).trimmed();
+    const int dot = rest.indexOf(QLatin1Char('.'));
+    if (dot < 0) {
+        out << rest + QStringLiteral("|");
+        return out;
+    }
+    // every '-' before the first dot is a possible id/file boundary; nearest-to-dot
+    // first (the original heuristic), then walking leftward
+    for (int pos = rest.lastIndexOf(QLatin1Char('-'), dot); pos > 0;
+         pos = rest.lastIndexOf(QLatin1Char('-'), pos - 1)) {
+        out << rest.left(pos) + QStringLiteral("|") + rest.mid(pos + 1);
+        if (out.size() >= 4)
+            break;   // archive.org hammering cap
+    }
+    if (out.isEmpty())
+        out << rest + QStringLiteral("|");
+    return out;
+}
+
 // ── follow / refresh ─────────────────────────────────────────────────────────
 
 QString LezClient::followChannel(const QString& ref, QString* errorCode)
