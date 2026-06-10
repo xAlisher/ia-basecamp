@@ -33,7 +33,7 @@ public:
 
     // .rep SLOTs
     QString setGateways(QString jsonList) override;
-    QString setPreserveMode(QString mode) override;
+    QString choosePreserveMode(QString mode) override;
     QString getStatus() override;
     QString followChannel(QString channelRef) override;
     QString unfollowChannel(QString channelId) override;

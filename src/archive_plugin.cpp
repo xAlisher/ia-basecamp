@@ -29,7 +29,7 @@ void ArchivePlugin::pollGatewayHealth() { /* P1: indexer health + sync lag vs ti
 
 // ── config (P1) ─────────────────────────────────────────────────────────────
 QString ArchivePlugin::setGateways(QString)      { return kNotImpl; }
-QString ArchivePlugin::setPreserveMode(QString)  { return kNotImpl; }
+QString ArchivePlugin::choosePreserveMode(QString) { return kNotImpl; }
 QString ArchivePlugin::getStatus()               { return kNotImpl; }
 // ── channels (P1: lez_client.getTransactionsByAccount + decode ChannelInscribe) ──
 QString ArchivePlugin::followChannel(QString)    { return kNotImpl; }

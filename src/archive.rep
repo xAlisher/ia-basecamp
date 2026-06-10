@@ -17,7 +17,7 @@ class Archive
 
     // ── config ──────────────────────────────────────────────────────────────
     SLOT(QString setGateways(QString jsonList))      // [{indexerUrl,storageUrl}] in failover order
-    SLOT(QString setPreserveMode(QString mode))      // "delegate" | "local"
+    SLOT(QString choosePreserveMode(QString mode))      // "delegate" | "local"
     SLOT(QString getStatus())
 
     // ── channels (read the LEZ) ─────────────────────────────────────────────
