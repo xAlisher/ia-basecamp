@@ -136,3 +136,16 @@ multi-arch claim a config default instead of a porting project).
 
 **Note** · arm64/darwin artifacts can't be built or load-tested on this machine (no binfmt, no
 darwin builder) — that's CI's job post-merge. Claimed exactly that, no more.
+
+## 2026-06-11 — preserve provenance closed (live session)
+
+**Win** · CID provenance loop closed live: re-seeded popeye_big_bad_sinbad.mpeg reproduced the
+inscribed CID exactly (zDvZRwzkyahr…) once the upload temp file was named EXACTLY like
+keeper's (`keeper-{id}-{file}`). The Logos Storage dataset CID covers the manifest, and the
+manifest embeds the filename — identical bytes under a different name yield a different CID.
+Re-seeding = same bytes + same chunk size (65536) + same filename.
+
+**Fail** · a string of "differs from inscribed" warnings before the insight · first blamed
+IA-regenerated thumbnails (true for __ia_thumb.jpg — those genuinely drift), then tested a
+byte-stable mpeg which still differed — only then checked what else feeds the dataset CID.
+Root cause: assuming content-addressing covers content only; it covers the manifest.
