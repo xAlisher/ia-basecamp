@@ -101,6 +101,10 @@ void LezClient::pollHealth()
                              && m_syncLag < kLagDegradedThreshold;
         m_gatewayState = healthy ? QStringLiteral("ready") : QStringLiteral("degraded");
         emit healthChanged(m_gatewayState, m_syncLag);
+        // federation: a lagging gateway is demoted like a dead one — the next poll
+        // (and the next scan) tries the next gateway in the failover order
+        if (!healthy && m_gateways.size() > 1)
+            m_active = (m_active + 1) % m_gateways.size();
     });
 }
 

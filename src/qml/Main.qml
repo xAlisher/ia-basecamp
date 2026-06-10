@@ -385,6 +385,24 @@ Item {
             // ── Collections tab ──────────────────────────────────────────────
             ColumnLayout {
                 spacing: 8
+                // #519 surfaced where it matters: this list may be missing recent inscriptions
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: root.gatewayState === "ready" ? 0 : staleLbl.implicitHeight + 16
+                    visible: implicitHeight > 0
+                    radius: 6; color: root.bgSecondary
+                    border.color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
+                    clip: true
+                    Label {
+                        id: staleLbl
+                        anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 10 }
+                        text: root.gatewayState === "offline"
+                              ? "Gateway unreachable — showing cached collections; nothing here is live."
+                              : "Gateway is lagging " + root.syncLag + " slots behind the chain — recent inscriptions may be missing."
+                        color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
+                        font.pixelSize: 11; wrapMode: Text.WordWrap
+                    }
+                }
                 ListView {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     model: root.collections

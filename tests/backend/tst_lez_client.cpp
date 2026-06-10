@@ -382,6 +382,67 @@ private slots:
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
     }
 
+    void failover_rotatesOnLag()
+    {
+        // P4: a lagging gateway is demoted like a dead one
+        MockNode laggy;
+        QVERIFY(laggy.start());
+        laggy.info = QJsonObject{ { "slot", 50000 }, { "lib_slot", 10000 },   // lag 40k
+                                  { "tip", "t" },    { "mode", "Online" } };
+
+        LezClient* c = new LezClient(this);
+        c->setGateways({ { laggy.baseUrl(), QString() }, { m_node->baseUrl(), QString() } });
+
+        QSignalSpy spy(c, &LezClient::healthChanged);
+        c->pollHealth();
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("degraded"));
+        QCOMPARE(c->activeGateway(), 1);   // demoted
+
+        c->pollHealth();                   // healthy gateway takes over
+        QVERIFY(spy.wait(3000));
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+        QCOMPARE(spy.last().at(1).toLongLong(), qint64(500));
+    }
+
+    void scanFailover_cursorSurvivesGatewayDeath()
+    {
+        // P4: a scan dying mid-history keeps its cursor; the retry on the next
+        // gateway resumes from where it stopped instead of rescanning
+        QJsonArray ops1{ inscribeOp(kChannel, manifest("c1", "A", "cid-1", 1), "sig") };
+        m_node->blocks = QJsonArray{ block(8000, "tx-1", ops1) };
+
+        MockNode dying;
+        QVERIFY(dying.start());
+        dying.info = m_node->info;
+        dying.blocks = m_node->blocks;
+
+        LezClient* c = new LezClient(this);
+        c->setGateways({ { dying.baseUrl(), QString() }, { m_node->baseUrl(), QString() } });
+
+        ScanWaiter w1(c);
+        c->followChannel(kChannel + "@7000");
+        QVERIFY(w1.wait(kChannel));        // first scan completes on gateway 0
+        QCOMPARE(c->collectionsJson().size(), 1);
+
+        dying.refuse = true;               // gateway 0 dies; chain advances on gateway 1
+        QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "B", "cid-2", 1), "sig") };
+        m_node->blocks.append(block(10900, "tx-2", ops2));
+        m_node->info = QJsonObject{ { "slot", 11500 }, { "lib_slot", 11000 },
+                                    { "tip", "t" },    { "mode", "Online" } };
+
+        ScanWaiter w2(c);
+        QVERIFY(c->refreshChannel(kChannel));   // hits dead gateway 0 → rotates
+        QVERIFY(w2.wait(kChannel));
+
+        const int healthyBefore = m_node->requestCount;
+        ScanWaiter w3(c);
+        QVERIFY(c->refreshChannel(kChannel));   // now on gateway 1, resumes from cursor
+        QVERIFY(w3.wait(kChannel));
+        QCOMPARE(c->collectionsJson().size(), 2);
+        QVERIFY(m_node->requestCount - healthyBefore <= 3);   // delta only, no rescan
+    }
+
     // ── live (opt-in: ARCHIVE_LIVE_NODE=http://host:port) ───────────────────
 
     void live_readKeeperStyleChannel()
