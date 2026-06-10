@@ -2,3 +2,33 @@
 
 Raw wins/fails captured after each issue (auto-retro), reshuffled into PROJECT_KNOWLEDGE.md / skills at `/retro`.
 Format per fieldcraft wins-and-fails: each fail names the **moment**, the **wrong action**, the **root cause**.
+
+## 2026-06-10 — P0 (issue #2)
+
+**Fail** · verifying the Basecamp load · drove GUI clicks via ydotool to open the module view ·
+clicks landed in an unrelated window (Proton Mail) because GNOME pointer acceleration distorts
+relative moves; ~20 min lost and real misclick risk. Root cause: reached for GUI automation
+before asking "what's the headless equivalent?" — the standalone harness + log grep already
+proved every load stage. Headless-first is now the standing rule for verification.
+
+**Fail** · first runs of the load smoke test were red on a working module · the script grepped
+for qDebug lines that never reach a redirected log without `QT_FORCE_STDERR_LOGGING=1` /
+`QT_ASSUME_STDERR_HAS_CONSOLE=1`. Root cause: assumed qDebug output behaves like stdout; a
+prior manual run had only "worked" because those env vars happened to be set in that shell.
+
+**Fail** · Basecamp rendered the view but `logos.module("archive")` was null with zero errors ·
+installed the `.#lgx` (dev-only) package; Basecamp resolves the backend via
+`main["linux-amd64"]`, which that manifest lacks. Root cause: the silent-failure pair
+(view loads / backend skipped) is invisible in every log; only a manifest diff against radio's
+known-good install exposed it. → skill `lgx-ui-qml-backend-dual-variant`, fix
+`scripts/install-lgx.sh`.
+
+**Win** · spike answered without a live gateway (explorer fully 502): combined the local LEZ
+repo clone (indexer borsh internals), a sparse clone of upstream's `l2-sequencer-archival-demo`
+(the reference consumer), and a live read against the synced sneg node — decoded a real keeper
+inscription end-to-end (opcode 17). The "indexer JSON-RPC" assumption in SPEC §4 was disproven
+at the type level before any client code was written.
+
+**Win** · the standalone `nix run .` harness is a complete P0 verifier for ui_qml-with-backend
+modules: plugin load, initLogos, QRO remoting, QML replica sync — all greppable. Now codified
+as `tests/integration/standalone_load_test.sh`.
