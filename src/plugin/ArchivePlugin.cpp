@@ -144,6 +144,10 @@ void ArchivePlugin::pollGatewayHealth()
         return;
     m_lez->pollHealth();
     m_storage->pollHealth();
+    // usedBytes resets with the process — keep the campaign counter live, not
+    // only after the next preserve
+    if (m_storage->storageState() == QLatin1String("ready"))
+        m_storage->queryRepoStat();
 }
 
 // ── status ──────────────────────────────────────────────────────────────────
