@@ -443,6 +443,40 @@ private slots:
         QVERIFY(m_node->requestCount - healthyBefore <= 3);   // delta only, no rescan
     }
 
+    void scanFailover_diesMidPagination()
+    {
+        // P4 (Senty): the gateway dies BETWEEN pages of one scan. The scan is pinned to
+        // its gateway, fails with the partial cursor persisted, and the next refresh
+        // resumes from that cursor on the surviving gateway.
+        QJsonArray ops1{ inscribeOp(kChannel, manifest("c1", "A", "cid-1", 1), "sig") };
+        QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "B", "cid-2", 1), "sig") };
+        const QJsonArray chain{ block(1000, "tx-1", ops1), block(9900, "tx-2", ops2) };
+
+        MockNode dying;
+        QVERIFY(dying.start());
+        dying.info = m_node->info;          // lib 10000 → scan from 500 needs 5 pages
+        dying.blocks = chain;
+        dying.failAfterRequests = 2;        // serves /info + page 1, then dies
+        m_node->blocks = chain;
+
+        LezClient* c = new LezClient(this);
+        c->setGateways({ { dying.baseUrl(), QString() }, { m_node->baseUrl(), QString() } });
+
+        ScanWaiter w1(c);
+        QSignalSpy errSpy(c, &LezClient::errorOccurred);
+        c->followChannel(kChannel + "@500");
+        QVERIFY(w1.wait(kChannel, 10000));
+        QCOMPARE(c->collectionsJson().size(), 1);   // page 1 (slot 1000) landed, then death
+        QCOMPARE(errSpy.count(), 1);                // surfaced, not silent
+        QCOMPARE(c->channelsJson()[0].toObject().value("synced").toBool(), false);
+
+        ScanWaiter w2(c);
+        QVERIFY(c->refreshChannel(kChannel));       // rotated to the healthy gateway
+        QVERIFY(w2.wait(kChannel, 10000));
+        QCOMPARE(c->collectionsJson().size(), 2);   // resumed; nothing skipped, no dupes
+        QCOMPARE(c->channelsJson()[0].toObject().value("synced").toBool(), true);
+    }
+
     // ── live (opt-in: ARCHIVE_LIVE_NODE=http://host:port) ───────────────────
 
     void live_readKeeperStyleChannel()

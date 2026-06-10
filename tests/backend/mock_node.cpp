@@ -25,7 +25,7 @@ QString MockNode::baseUrl() const
 void MockNode::handleConnection()
 {
     QTcpSocket* sock = m_server.nextPendingConnection();
-    if (refuse) {
+    if (refuse || (failAfterRequests >= 0 && requestCount >= failAfterRequests)) {
         sock->abort();
         sock->deleteLater();
         return;

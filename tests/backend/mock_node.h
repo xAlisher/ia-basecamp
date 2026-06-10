@@ -20,6 +20,7 @@ public:
     QJsonObject info;                   // returned verbatim from /cryptarchia/info
     QJsonArray blocks;                  // full chain; sliced per request
     bool refuse = false;                // simulate a dead gateway (close immediately)
+    int failAfterRequests = -1;         // die mid-conversation after N served requests
     int requestCount = 0;
 
 private:

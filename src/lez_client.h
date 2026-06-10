@@ -109,8 +109,12 @@ signals:
 
 private:
     void startScan(const QString& channelId);
-    void scanNextPage(const QString& channelId, qint64 generation, qint64 libSlot, int pagesLeft);
-    QNetworkReply* httpGet(const QString& path, const QString& query = QString());
+    void scanNextPage(const QString& channelId, qint64 generation, int gatewayIdx,
+                      qint64 libSlot, int pagesLeft);
+    // gatewayIdx -1 = current active; scans pin their gateway so one consistent
+    // finalized view drives the whole pagination
+    QNetworkReply* httpGet(const QString& path, const QString& query = QString(),
+                           int gatewayIdx = -1);
     void failOver(const QString& code);
 
     QNetworkAccessManager* m_net = nullptr;
@@ -124,6 +128,7 @@ private:
     QMap<QString, Channel> m_channels;
     QMap<QString, qint64> m_scanning;   // channelId → generation that owns the in-flight scan
     qint64 m_generationCounter = 0;
+    int m_degradedRotations = 0;        // stop churning once every gateway proved degraded
 };
 
 #endif // LEZ_CLIENT_H

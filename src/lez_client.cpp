@@ -49,9 +49,10 @@ void LezClient::setPreserveMode(const QString& mode)
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
 
-QNetworkReply* LezClient::httpGet(const QString& path, const QString& query)
+QNetworkReply* LezClient::httpGet(const QString& path, const QString& query, int gatewayIdx)
 {
-    const Gateway& gw = m_gateways.at(m_active);
+    const int idx = (gatewayIdx >= 0 && gatewayIdx < m_gateways.size()) ? gatewayIdx : m_active;
+    const Gateway& gw = m_gateways.at(idx);
     QUrl url(gw.nodeUrl);
     QString base = url.path();
     while (base.endsWith(QLatin1Char('/')))
@@ -101,10 +102,14 @@ void LezClient::pollHealth()
                              && m_syncLag < kLagDegradedThreshold;
         m_gatewayState = healthy ? QStringLiteral("ready") : QStringLiteral("degraded");
         emit healthChanged(m_gatewayState, m_syncLag);
-        // federation: a lagging gateway is demoted like a dead one — the next poll
-        // (and the next scan) tries the next gateway in the failover order
-        if (!healthy && m_gateways.size() > 1)
+        // federation: a lagging gateway is demoted like a dead one — but once a full
+        // rotation proved every gateway degraded, stay put instead of churning forever
+        if (healthy) {
+            m_degradedRotations = 0;
+        } else if (m_gateways.size() > 1 && m_degradedRotations < m_gateways.size()) {
             m_active = (m_active + 1) % m_gateways.size();
+            ++m_degradedRotations;
+        }
     });
 }
 
@@ -250,8 +255,12 @@ void LezClient::startScan(const QString& channelId)
     const qint64 generation = m_channels.value(channelId).generation;
     m_scanning.insert(channelId, generation);
 
-    QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/info"));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, channelId, generation] {
+    // pin the whole scan to one gateway: lib_slot and every page must come from the
+    // same finalized view, or cursor advancement could silently skip inscriptions
+    const int gatewayIdx = m_active;
+    QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/info"), QString(), gatewayIdx);
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, channelId, generation, gatewayIdx] {
         reply->deleteLater();
         if (m_scanning.value(channelId, -1) != generation)
             return;   // unfollowed (or re-followed) while in flight — not ours anymore
@@ -269,12 +278,12 @@ void LezClient::startScan(const QString& channelId)
             emit scanFinished(channelId, false);
             return;
         }
-        scanNextPage(channelId, generation, libSlot, kMaxPagesPerRefresh);
+        scanNextPage(channelId, generation, gatewayIdx, libSlot, kMaxPagesPerRefresh);
     });
 }
 
-void LezClient::scanNextPage(const QString& channelId, qint64 generation, qint64 libSlot,
-                             int pagesLeft)
+void LezClient::scanNextPage(const QString& channelId, qint64 generation, int gatewayIdx,
+                             qint64 libSlot, int pagesLeft)
 {
     if (m_scanning.value(channelId, -1) != generation)
         return;
@@ -294,9 +303,9 @@ void LezClient::scanNextPage(const QString& channelId, qint64 generation, qint64
     QUrlQuery q;
     q.addQueryItem(QStringLiteral("slot_from"), QString::number(from));
     q.addQueryItem(QStringLiteral("slot_to"), QString::number(to));
-    QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/blocks"), q.toString());
+    QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/blocks"), q.toString(), gatewayIdx);
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, channelId, generation, libSlot, pagesLeft, to] {
+            [this, reply, channelId, generation, gatewayIdx, libSlot, pagesLeft, to] {
         reply->deleteLater();
         if (m_scanning.value(channelId, -1) != generation)
             return;
@@ -334,7 +343,7 @@ void LezClient::scanNextPage(const QString& channelId, qint64 generation, qint64
         ch.cursor = to;
         if (added)
             emit collectionsChanged();
-        scanNextPage(channelId, generation, libSlot, pagesLeft - 1);
+        scanNextPage(channelId, generation, gatewayIdx, libSlot, pagesLeft - 1);
     });
 }
 
