@@ -1,6 +1,7 @@
 #ifndef ARCHIVE_PLUGIN_H
 #define ARCHIVE_PLUGIN_H
 
+#include <QHash>
 #include <QString>
 #include "archive_interface.h"
 #include "LogosViewPluginBase.h"
@@ -44,13 +45,16 @@ public:
     QString getMirrorStatus(QString collectionId) override;
 
 private:
-    void pollGatewayHealth();   // ping the gateway node + compute syncLagBlocks (surfaces LEZ#519)
-    void publishReadState();    // rebuild channelsJson/collectionsJson/summaryJson PROPs
+    void pollGatewayHealth();    // ping gateway node + storage, compute syncLagBlocks (LEZ#519)
+    void publishReadState();     // rebuild channelsJson/collectionsJson/summaryJson PROPs
+    void syncStorageEndpoint();  // point storage at gateway storageUrl (delegate) or local node
 
     LogosAPI*      m_logosAPI = nullptr;
     LezClient*     m_lez = nullptr;
     StorageClient* m_storage = nullptr;
     QTimer*        m_healthTimer = nullptr;
+    QHash<QString, QString> m_cidToCollection;   // in-flight pin/unpin → collection id
+    qint64         m_usedBytes = 0;
 };
 
 #endif // ARCHIVE_PLUGIN_H

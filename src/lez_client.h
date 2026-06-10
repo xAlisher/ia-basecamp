@@ -37,6 +37,7 @@ public:
         QString txHash;
         QString curator;     // inscription signer
         QString state;       // available | mirroring | mirrored | error (P2 drives this)
+        qint64  progressBlocks = 0;   // transient pin progress while state == mirroring
     };
 
     struct Channel {
@@ -82,6 +83,12 @@ public:
     QJsonArray channelsJson() const;
     QJsonArray collectionsJson(const QString& channelId = QString()) const;
     QJsonObject summaryJson() const;
+
+    // mirror bookkeeping (P2 — storage results land back on the collection records)
+    QString collectionCid(const QString& collectionId) const;   // empty if unknown
+    QString collectionState(const QString& collectionId) const;
+    bool setCollectionState(const QString& collectionId, const QString& state,
+                            qint64 progressBlocks = -1);
 
     // persistence (one file: gateways, preserveMode, channels+collections)
     void loadState();

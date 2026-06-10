@@ -16,5 +16,16 @@ add_executable(tst_lez_client
 target_include_directories(tst_lez_client PRIVATE ../../src)
 target_link_libraries(tst_lez_client PRIVATE Qt6::Core Qt6::Network Qt6::Test)
 
+add_executable(tst_storage_client
+    tst_storage_client.cpp
+    mock_storage.cpp
+    mock_storage.h
+    ../../src/storage_client.cpp
+    ../../src/storage_client.h
+)
+target_include_directories(tst_storage_client PRIVATE ../../src)
+target_link_libraries(tst_storage_client PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+
 enable_testing()
 add_test(NAME lez_client COMMAND tst_lez_client)
+add_test(NAME storage_client COMMAND tst_storage_client)

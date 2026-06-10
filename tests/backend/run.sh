@@ -9,4 +9,5 @@ nix develop ../.. --command bash -c '
     cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug > /dev/null
     cmake --build build -j"$(nproc)"
     XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_lez_client
+    XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_storage_client
 '

@@ -22,8 +22,12 @@ QString fail(const QString& code)
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
-const char* kNotImpl = R"({"ok":false,"error":"not_implemented"})";
-
+// the user's own node when preserveMode == "local" (Kubo default RPC port)
+QString localStorageUrl()
+{
+    const QByteArray env = qgetenv("ARCHIVE_LOCAL_STORAGE_URL");
+    return env.isEmpty() ? QStringLiteral("http://127.0.0.1:5001") : QString::fromUtf8(env);
+}
 } // namespace
 
 ArchivePlugin::ArchivePlugin(QObject* parent) : ArchiveSimpleSource(parent) {}
@@ -47,6 +51,39 @@ void ArchivePlugin::initLogos(LogosAPI* api)
         setLastError(code);
     });
 
+    connect(m_storage, &StorageClient::healthChanged, this, [this](const QString& state) {
+        setStorageState(state);
+    });
+    connect(m_storage, &StorageClient::pinProgress, this, [this](const QString& cid, qint64 blocks) {
+        m_lez->setCollectionState(m_cidToCollection.value(cid), QStringLiteral("mirroring"), blocks);
+    });
+    connect(m_storage, &StorageClient::pinFinished, this,
+            [this](const QString& cid, bool pinOk, const QString& error) {
+        const QString collectionId = m_cidToCollection.take(cid);
+        if (pinOk) {
+            m_lez->setCollectionState(collectionId, QStringLiteral("mirrored"));
+            m_storage->queryRepoStat();
+        } else {
+            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            setLastError(error);
+        }
+    });
+    connect(m_storage, &StorageClient::unpinFinished, this,
+            [this](const QString& cid, bool unpinOk, const QString& error) {
+        const QString collectionId = m_cidToCollection.take(cid);
+        if (unpinOk) {
+            m_lez->setCollectionState(collectionId, QStringLiteral("available"));
+            m_storage->queryRepoStat();
+        } else {
+            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            setLastError(error);
+        }
+    });
+    connect(m_storage, &StorageClient::repoStatResult, this, [this](qint64 usedBytes) {
+        m_usedBytes = usedBytes;
+        publishReadState();
+    });
+
     m_lez->loadState();
     setPreserveMode(m_lez->preserveMode());
     publishReadState();
@@ -61,15 +98,29 @@ void ArchivePlugin::initLogos(LogosAPI* api)
 
 void ArchivePlugin::pollGatewayHealth()
 {
-    if (m_lez)
-        m_lez->pollHealth();
+    if (!m_lez)
+        return;
+    m_lez->pollHealth();
+    syncStorageEndpoint();
+    m_storage->pollHealth();
+}
+
+void ArchivePlugin::syncStorageEndpoint()
+{
+    const auto gws = m_lez->gateways();
+    const QString gatewayStorage =
+        gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).storageUrl;
+    m_storage->setEndpoint(StorageClient::resolveEndpoint(m_lez->preserveMode(), gatewayStorage,
+                                                          localStorageUrl()));
 }
 
 void ArchivePlugin::publishReadState()
 {
     setChannelsJson(QString::fromUtf8(QJsonDocument(m_lez->channelsJson()).toJson(QJsonDocument::Compact)));
     setCollectionsJson(QString::fromUtf8(QJsonDocument(m_lez->collectionsJson()).toJson(QJsonDocument::Compact)));
-    setSummaryJson(QString::fromUtf8(QJsonDocument(m_lez->summaryJson()).toJson(QJsonDocument::Compact)));
+    QJsonObject summary = m_lez->summaryJson();
+    summary.insert(QStringLiteral("usedBytes"), m_usedBytes);
+    setSummaryJson(QString::fromUtf8(QJsonDocument(summary).toJson(QJsonDocument::Compact)));
 }
 
 // ── config ──────────────────────────────────────────────────────────────────
@@ -108,6 +159,8 @@ QString ArchivePlugin::choosePreserveMode(QString mode)
         return fail(QStringLiteral("invalid_mode"));
     m_lez->setPreserveMode(mode);
     setPreserveMode(mode);
+    syncStorageEndpoint();
+    m_storage->pollHealth();   // the mode switch changes which node we talk to
     return ok({ { QStringLiteral("mode"), mode } });
 }
 
@@ -159,7 +212,45 @@ QString ArchivePlugin::getCollections(QString channelId)
     return ok({ { QStringLiteral("collections"), m_lez->collectionsJson(channelId) } });
 }
 
-// ── preserve (P2: storage_client) ───────────────────────────────────────────
-QString ArchivePlugin::mirrorCollection(QString)   { return kNotImpl; }
-QString ArchivePlugin::unmirrorCollection(QString) { return kNotImpl; }
-QString ArchivePlugin::getMirrorStatus(QString)    { return kNotImpl; }
+// ── preserve ────────────────────────────────────────────────────────────────
+
+QString ArchivePlugin::mirrorCollection(QString collectionId)
+{
+    const QString cid = m_lez->collectionCid(collectionId);
+    if (cid.isEmpty())
+        return fail(QStringLiteral("unknown_collection"));
+    if (m_lez->collectionState(collectionId) == QLatin1String("mirroring"))
+        return fail(QStringLiteral("mirror_in_progress"));
+    syncStorageEndpoint();
+    if (m_storage->endpoint().isEmpty())
+        return fail(QStringLiteral("no_storage_endpoint"));
+    m_cidToCollection.insert(cid, collectionId);
+    m_lez->setCollectionState(collectionId, QStringLiteral("mirroring"), 0);
+    m_storage->pin(cid);
+    return ok({ { QStringLiteral("collectionId"), collectionId },
+                { QStringLiteral("cid"), cid },
+                { QStringLiteral("mode"), m_lez->preserveMode() } });
+}
+
+QString ArchivePlugin::unmirrorCollection(QString collectionId)
+{
+    const QString cid = m_lez->collectionCid(collectionId);
+    if (cid.isEmpty())
+        return fail(QStringLiteral("unknown_collection"));
+    syncStorageEndpoint();
+    if (m_storage->endpoint().isEmpty())
+        return fail(QStringLiteral("no_storage_endpoint"));
+    m_cidToCollection.insert(cid, collectionId);
+    m_storage->unpin(cid);
+    return ok({ { QStringLiteral("collectionId"), collectionId } });
+}
+
+QString ArchivePlugin::getMirrorStatus(QString collectionId)
+{
+    const QString state = m_lez->collectionState(collectionId);
+    if (state.isEmpty())
+        return fail(QStringLiteral("unknown_collection"));
+    return ok({ { QStringLiteral("collectionId"), collectionId },
+                { QStringLiteral("state"), state },
+                { QStringLiteral("storageState"), m_storage->storageState() } });
+}

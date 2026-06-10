@@ -371,6 +371,7 @@ QJsonArray LezClient::collectionsJson(const QString& channelId) const
                 { QStringLiteral("txHash"), c.txHash },
                 { QStringLiteral("curator"), c.curator },
                 { QStringLiteral("state"), c.state },
+                { QStringLiteral("progressBlocks"), c.progressBlocks },
             });
         }
     }
@@ -380,14 +381,58 @@ QJsonArray LezClient::collectionsJson(const QString& channelId) const
 QJsonObject LezClient::summaryJson() const
 {
     qint64 collections = 0;
-    for (const Channel& ch : m_channels)
+    qint64 mirrored = 0;
+    for (const Channel& ch : m_channels) {
         collections += ch.collections.size();
+        for (const Collection& c : ch.collections)
+            if (c.state == QLatin1String("mirrored"))
+                ++mirrored;
+    }
     return QJsonObject{
         { QStringLiteral("following"), m_channels.size() },
         { QStringLiteral("collections"), collections },
-        { QStringLiteral("mirrored"), 0 },     // P2
-        { QStringLiteral("usedBytes"), 0 },    // P2
+        { QStringLiteral("mirrored"), mirrored },
+        { QStringLiteral("usedBytes"), 0 },    // overridden by the plugin from repo/stat
     };
+}
+
+QString LezClient::collectionCid(const QString& collectionId) const
+{
+    for (const Channel& ch : m_channels)
+        for (const Collection& c : ch.collections)
+            if (c.id == collectionId)
+                return c.cid;
+    return {};
+}
+
+QString LezClient::collectionState(const QString& collectionId) const
+{
+    for (const Channel& ch : m_channels)
+        for (const Collection& c : ch.collections)
+            if (c.id == collectionId)
+                return c.state;
+    return {};
+}
+
+bool LezClient::setCollectionState(const QString& collectionId, const QString& state,
+                                   qint64 progressBlocks)
+{
+    for (Channel& ch : m_channels) {
+        for (Collection& c : ch.collections) {
+            if (c.id != collectionId)
+                continue;
+            c.state = state;
+            if (progressBlocks >= 0)
+                c.progressBlocks = progressBlocks;
+            if (state != QLatin1String("mirroring")) {
+                c.progressBlocks = 0;
+                saveState();   // terminal states only — progress ticks stay off disk
+            }
+            emit collectionsChanged();
+            return true;
+        }
+    }
+    return false;
 }
 
 // ── persistence ──────────────────────────────────────────────────────────────
@@ -503,6 +548,8 @@ void LezClient::loadState()
             col.txHash = jsonStr(c, "txHash");
             col.curator = jsonStr(c, "curator");
             col.state = jsonStr(c, "state");
+            if (col.state == QLatin1String("mirroring"))   // no pin survives a restart
+                col.state = QStringLiteral("available");
             ch.collections.append(col);
         }
         if (!ch.channelId.isEmpty())
