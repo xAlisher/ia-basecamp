@@ -106,3 +106,21 @@ the scenario it creates. Senty caught both the bug and the test gap in one pass.
 start (gateway index here), let mid-operation failures fail cleanly with persisted progress,
 and re-resolve the resource only at the next operation start. Same family as P1's generation
 guard: capture context once, verify ownership at every async boundary.
+
+## 2026-06-10 — P6 (issue #8)
+
+**Fail** · passed chain-inscribed `thumbnail` strings straight into `Image.source` · any curator
+(or channel squatter) could make every card-sharing user's UI fetch an arbitrary URL — a
+client-side SSRF/privacy leak. Root cause: treating manifest fields as data when one of them
+is a *reference the UI dereferences*. Rule: every URL-ish field from the chain goes through a
+shape allowlist + resolves only against an endpoint we chose. Senty caught it; test now covers
+evil-URL/file:///traversal.
+
+**Fail** · metadata.json `nix.cmake.find_packages`/`extra_link_libraries` for Qt6::Gui ·
+no effect, build broke on `QDesktopServices` — those fields are a documented no-op
+(`builder-metadata-cmake-fields-noop`); the CMake guard-block recipe was one index lookup away.
+Root cause: edited the familiar-looking config instead of checking the index first.
+
+**Win** · share path split into a pure helper (`share_helper`) made every security property
+unit-testable in milliseconds: traversal kills, PNG validation, size caps, thumbnail
+allowlist — no plugin/QRO scaffolding needed.
