@@ -10,4 +10,5 @@ nix develop ../.. --command bash -c '
     cmake --build build -j"$(nproc)"
     XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_lez_client
     XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_storage_client
+    XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_share_helper
 '

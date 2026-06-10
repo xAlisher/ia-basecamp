@@ -1,9 +1,13 @@
 #include "archive_plugin.h"
 #include "lez_client.h"
+#include "share_helper.h"
 #include "storage_client.h"
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QDebug>
@@ -257,4 +261,34 @@ QString ArchivePlugin::getMirrorStatus(QString collectionId)
     return ok({ { QStringLiteral("collectionId"), collectionId },
                 { QStringLiteral("state"), state },
                 { QStringLiteral("storageState"), m_storage->storageState() } });
+}
+
+// ── share cards (SPEC §12) ──────────────────────────────────────────────────
+
+QString ArchivePlugin::getShareData(QString scope)
+{
+    const QJsonObject data = ShareHelper::buildShareData(m_lez->collectionsJson(), scope);
+    return QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact));
+}
+
+QString ArchivePlugin::saveShareCard(QString pngBase64, QString name)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
+                        + QStringLiteral("/ia-archive");
+    const QJsonObject r = ShareHelper::savePngBase64(dir, name, pngBase64);
+    if (!r.value(QStringLiteral("ok")).toBool())
+        setLastError(r.value(QStringLiteral("error")).toString());
+    return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
+}
+
+QString ArchivePlugin::revealCard(QString path)
+{
+    // backend runs in ui-host (no QML sandbox) — open the folder, never the file
+    // (a folder open can't execute anything)
+    const QFileInfo fi(path);
+    if (!fi.exists() || fi.suffix() != QLatin1String("png"))
+        return fail(QStringLiteral("no_such_card"));
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath())))
+        return fail(QStringLiteral("cannot_open_folder"));
+    return ok({ { QStringLiteral("path"), fi.absoluteFilePath() } });
 }

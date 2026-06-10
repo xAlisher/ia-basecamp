@@ -103,6 +103,54 @@ Item {
         if (activityModel.count > 200) activityModel.remove(200, activityModel.count - 200)
     }
 
+    // ── Share cards (SPEC §12): getShareData → ShareCard render → grabToImage →
+    //    Canvas toDataURL → saveShareCard(pngBase64) → revealCard ────────────────
+    property var shareData: null
+    function shareScope(scope) {
+        call("getShareData", [scope], function(r) {
+            if (!r || r.ok === false) return
+            root.shareData = r
+            shareSettleTimer.restart()   // one tick for bindings to settle before the grab
+        })
+    }
+    Timer {
+        id: shareSettleTimer
+        interval: 120
+        onTriggered: {
+            shareCard.grabToImage(function(result) {
+                exportCanvas.exportUrl = result.url
+                exportCanvas.loadImage(result.url)
+            }, Qt.size(1200, 675))
+        }
+    }
+    Canvas {
+        id: exportCanvas
+        width: 1200; height: 675
+        visible: false
+        property url exportUrl
+        onImageLoaded: {
+            var ctx = getContext("2d")
+            ctx.drawImage(exportUrl, 0, 0, width, height)
+            requestPaint()
+        }
+        onPainted: {
+            if (exportUrl == "") return
+            var dataUrl = toDataURL("image/png")
+            unloadImage(exportUrl)
+            exportUrl = ""
+            var b64 = dataUrl.substring(dataUrl.indexOf(",") + 1)
+            var name = "ia-archive-" + (root.shareData && root.shareData.scope === "me"
+                                         ? "contribution" : "collection")
+                       + "-" + Qt.formatDateTime(new Date(), "yyyyMMdd-hhmmss")
+            root.call("saveShareCard", [b64, name], function(r) {
+                if (r && r.ok) {
+                    root.logEvent("share", "Card saved — " + r.path)
+                    root.call("revealCard", [r.path], null)
+                }
+            })
+        }
+    }
+
     function stateColor(s) {
         return s === "ready" ? successGreen
              : s === "degraded" ? warningYellow : errorRed
@@ -114,6 +162,91 @@ Item {
     }
 
     Rectangle { anchors.fill: parent; color: root.bgPrimary }
+
+    // ── ShareCard — rendered offscreen at X/Twitter ratio, no PII ────────────
+    Rectangle {
+        id: shareCard
+        width: 1200; height: 675
+        x: -width * 2; y: 0            // parked offscreen; must stay visible for grabToImage
+        color: "#101014"
+        Rectangle {                     // subtle accent frame
+            anchors.fill: parent; anchors.margins: 10
+            color: "transparent"; border.color: root.accentOrange; border.width: 2; radius: 14
+        }
+        ColumnLayout {
+            anchors.fill: parent; anchors.margins: 56
+            spacing: 18
+            Label {
+                text: root.shareData && root.shareData.scope !== "me"
+                      ? (root.shareData.title || "A collection")
+                      : "I'm preserving the Internet Archive"
+                color: "#FFFFFF"; font.pixelSize: 44; font.bold: true
+                Layout.fillWidth: true; elide: Text.ElideRight
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 28
+                Label {
+                    text: root.shareData ? root.gb((root.shareData.totalGB || 0) * 1e9) : "0"
+                    color: root.accentOrange; font.pixelSize: 120; font.bold: true
+                }
+                ColumnLayout {
+                    spacing: 4
+                    Label { text: "GB preserved"; color: "#FFFFFF"; font.pixelSize: 30 }
+                    Label {
+                        text: root.shareData && root.shareData.scope === "me"
+                              ? (root.shareData.count || 0) + " collections" : "on decentralized Storage"
+                        color: "#A4A4A4"; font.pixelSize: 22
+                    }
+                }
+                Item { Layout.fillWidth: true }
+            }
+            // thumbnail grid: 1–6 covers; missing thumbnails get a tasteful placeholder
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 14
+                Repeater {
+                    model: root.shareData ? Math.min(6, (root.shareData.items || []).length) : 0
+                    Rectangle {
+                        implicitWidth: 150; implicitHeight: 110; radius: 10
+                        color: "#1E1E26"; border.color: "#383838"
+                        clip: true
+                        Image {
+                            id: thumbImg
+                            anchors.fill: parent
+                            source: root.shareData.items[index].thumbnail || ""
+                            fillMode: Image.PreserveAspectCrop
+                            visible: status === Image.Ready
+                        }
+                        Label {   // placeholder: collection initial
+                            anchors.centerIn: parent
+                            visible: thumbImg.status !== Image.Ready
+                            text: (root.shareData.items[index].name || "?").substring(0, 1).toUpperCase()
+                            color: root.accentOrange; font.pixelSize: 42; font.bold: true
+                        }
+                        Label {
+                            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 6 }
+                            text: root.shareData.items[index].name || ""
+                            color: "#FFFFFF"; font.pixelSize: 12; elide: Text.ElideRight
+                            visible: thumbImg.status !== Image.Ready
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
+                }
+                Item { Layout.fillWidth: true }
+            }
+            Item { Layout.fillHeight: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: "preserved & verifiable on the Logos Execution Zone"
+                    color: "#A4A4A4"; font.pixelSize: 20
+                }
+                Item { Layout.fillWidth: true }
+                Label { text: "logos.co"; color: root.accentOrange; font.pixelSize: 20; font.bold: true }
+            }
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -256,6 +389,11 @@ Item {
                     text: "following " + (root.summary.following || 0)
                           + " · " + (root.summary.collections || 0) + " collections"
                     color: root.textSecondary; font.pixelSize: 11
+                }
+                Button {
+                    text: "Share"
+                    enabled: (root.summary.mirrored || 0) > 0
+                    onClicked: root.shareScope("me")
                 }
             }
         }
@@ -473,6 +611,13 @@ Item {
                                         root.copyText(root.explorerUrl(modelData.txHash))
                                         root.logEvent("copy", "Provenance link copied — " + root.shortId(modelData.txHash))
                                     }
+                                    contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 10 }
+                                    background: Rectangle { color: "transparent" }
+                                }
+                                ToolButton {
+                                    text: "share"
+                                    enabled: !!modelData.id
+                                    onClicked: root.shareScope(modelData.id)
                                     contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 10 }
                                     background: Rectangle { color: "transparent" }
                                 }

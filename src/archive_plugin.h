@@ -43,6 +43,9 @@ public:
     QString mirrorCollection(QString collectionId) override;
     QString unmirrorCollection(QString collectionId) override;
     QString getMirrorStatus(QString collectionId) override;
+    QString getShareData(QString scope) override;
+    QString saveShareCard(QString pngBase64, QString name) override;
+    QString revealCard(QString path) override;
 
 private:
     void pollGatewayHealth();    // ping gateway node + storage, compute syncLagBlocks (LEZ#519)

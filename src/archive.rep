@@ -30,4 +30,9 @@ class Archive
     SLOT(QString mirrorCollection(QString collectionId))
     SLOT(QString unmirrorCollection(QString collectionId))
     SLOT(QString getMirrorStatus(QString collectionId))
+
+    // ── share cards (SPEC §12 — growth) ─────────────────────────────────────
+    SLOT(QString getShareData(QString scope))        // "me" | collectionId → {title,totalGB,count,items}
+    SLOT(QString saveShareCard(QString pngBase64, QString name))  // QML grabToImage → PNG on disk → {ok,path}
+    SLOT(QString revealCard(QString path))           // open the saved card's folder
 }
