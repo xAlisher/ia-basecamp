@@ -42,9 +42,23 @@ Item {
     onChannelsRawChanged:    channels = safeParse(channelsRaw, [])
     onCollectionsRawChanged: collections = safeParse(collectionsRaw, [])
     onSummaryRawChanged:     summary = safeParse(summaryRaw, {})
-    onLastErrorChanged:      if (lastError) logEvent("error", lastError)
-    onGatewayStateChanged:   logEvent("gateway", "Gateway " + gatewayState
-                                      + (syncLag > 0 ? " · lag " + syncLag + " slots" : ""))
+
+    // Edge-triggered logging — the backend may re-emit unchanged values (health polls,
+    // repeated failovers); the activity log records transitions, the pills show state.
+    property string _loggedGatewayState: ""
+    property string _loggedError: ""
+    onLastErrorChanged: {
+        if (lastError && lastError !== _loggedError) {
+            _loggedError = lastError
+            logEvent("error", lastError)
+        }
+    }
+    onGatewayStateChanged: {
+        if (gatewayState !== _loggedGatewayState) {
+            _loggedGatewayState = gatewayState
+            logEvent("gateway", "Gateway " + gatewayState)   // lag lives in the pill (own binding)
+        }
+    }
 
     function safeParse(raw, fallback) {
         try {
@@ -57,12 +71,20 @@ Item {
     // SLOT call → parsed {ok,...} result into cb; failures land in the activity log
     function call(method, args, cb) {
         if (!backend) { logEvent("error", "No backend — module not loaded"); return }
-        var pending = backend[method].apply(backend, args)
-        logos.watch(pending, function(ret) {
-            var r = safeParse(ret, null)
-            if (r && r.ok === false) logEvent("error", method + ": " + r.error)
-            if (cb) cb(r)
-        }, function(_e) { logEvent("error", method + ": call failed") })
+        if (typeof backend[method] !== "function") {
+            logEvent("error", method + ": not available on this backend")
+            return
+        }
+        try {
+            var pending = backend[method].apply(backend, args)
+            logos.watch(pending, function(ret) {
+                var r = safeParse(ret, null)
+                if (r && r.ok === false) logEvent("error", method + ": " + r.error)
+                if (cb) cb(r)
+            }, function(_e) { logEvent("error", method + ": call failed") })
+        } catch (e) {
+            logEvent("error", method + ": " + e)
+        }
     }
 
     function gb(bytes) { return (bytes / 1e9).toFixed(bytes > 0 && bytes < 1e8 ? 2 : 1) }
@@ -310,10 +332,13 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
-                                Label { text: modelData.name; color: root.textPrimary; font.pixelSize: 13; font.bold: true }
+                                Label {
+                                    text: modelData.name || root.shortId(modelData.channelId) || "channel"
+                                    color: root.textPrimary; font.pixelSize: 13; font.bold: true
+                                }
                                 Label {
                                     text: (modelData.curator ? "curator " + root.shortId(modelData.curator) + " · " : "")
-                                          + modelData.collections + " collections"
+                                          + (modelData.collections || 0) + " collections"
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                             }
@@ -329,6 +354,7 @@ Item {
                             }
                             ToolButton {
                                 text: "↻"
+                                enabled: !!modelData.channelId
                                 onClicked: root.call("refreshChannel", [modelData.channelId], function(r) {
                                     if (r && r.ok) root.logEvent("refresh", "Refreshing " + root.shortId(modelData.channelId))
                                 })
@@ -337,6 +363,7 @@ Item {
                             }
                             ToolButton {
                                 text: "✕"
+                                enabled: !!modelData.channelId
                                 onClicked: root.call("unfollowChannel", [modelData.channelId], function(r) {
                                     if (r && r.ok) root.logEvent("follow", "Unfollowed " + root.shortId(modelData.channelId))
                                 })
@@ -376,7 +403,7 @@ Item {
                                 spacing: 8
                                 Label {
                                     Layout.fillWidth: true
-                                    text: modelData.title
+                                    text: modelData.title || modelData.cid || "untitled"
                                     color: root.textPrimary; font.pixelSize: 13; font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -385,7 +412,7 @@ Item {
                                     color: "transparent"; border.color: root.mirrorColor(modelData.state)
                                     Label {
                                         id: stLbl; anchors.centerIn: parent
-                                        text: modelData.state
+                                        text: (modelData.state || "available")
                                               + (modelData.state === "mirroring" && modelData.progressBlocks > 0
                                                  ? " · " + modelData.progressBlocks : "")
                                         color: root.mirrorColor(modelData.state); font.pixelSize: 10
@@ -393,7 +420,7 @@ Item {
                                 }
                                 Button {
                                     text: modelData.state === "mirrored" ? "Unpreserve" : "Preserve"
-                                    enabled: modelData.state !== "mirroring"
+                                    enabled: modelData.state !== "mirroring" && !!modelData.id
                                     onClicked: {
                                         if (modelData.state === "mirrored")
                                             root.call("unmirrorCollection", [modelData.id], function(r) {
@@ -413,7 +440,7 @@ Item {
                                 Label {
                                     text: (modelData.sizeBytes > 0 ? root.gb(modelData.sizeBytes) + " GB · " : "")
                                           + (modelData.items > 0 ? modelData.items + " items · " : "")
-                                          + "slot " + modelData.inscribedAt
+                                          + "slot " + (modelData.inscribedAt || "?")
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                                 Item { Layout.fillWidth: true }
@@ -423,6 +450,7 @@ Item {
                                 }
                                 ToolButton {
                                     text: "copy link"
+                                    enabled: !!modelData.txHash
                                     onClicked: {
                                         root.copyText(root.explorerUrl(modelData.txHash))
                                         root.logEvent("copy", "Provenance link copied — " + root.shortId(modelData.txHash))
