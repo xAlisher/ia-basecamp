@@ -25,6 +25,11 @@ public:
     virtual void initAndStart(const QString& dataDir, BoolCb cb) = 0;
     virtual void ping(BoolCb cb) = 0;                          // node alive?
     virtual void fetch(const QString& cid, BoolCb cb) = 0;     // replicate to the local node
+    // upload completion arrives via the storageUploadDone event (cid = last arg);
+    // the upload() cb only acknowledges acceptance. ONE upload in flight at a time.
+    virtual void subscribeUploadDone(std::function<void(bool ok, const QString& cid,
+                                                        const QString& error)> cb) = 0;
+    virtual void upload(const QString& path, BoolCb cb) = 0;
     virtual void removeCid(const QString& cid, BoolCb cb) = 0;
     virtual void exists(const QString& cid, std::function<void(bool ok, bool held)> cb) = 0;
     virtual void space(std::function<void(bool ok, qint64 usedBytes)> cb) = 0;
@@ -36,6 +41,11 @@ public:
 class NullStorageTransport : public StorageTransport {
 public:
     void subscribeStarted(std::function<void(bool)>) override {}
+    void subscribeUploadDone(std::function<void(bool, const QString&, const QString&)>) override {}
+    void upload(const QString&, BoolCb cb) override
+    {
+        cb(false, QStringLiteral("storage_unavailable"));
+    }
     void initAndStart(const QString&, BoolCb cb) override
     {
         cb(false, QStringLiteral("storage_unavailable"));
@@ -74,6 +84,8 @@ public:
     QString storageState() const { return m_storageState; }
 
     void pin(const QString& cid);               // → pinFinished
+    void upload(const QString& path);           // → uploadFinished(ok, cid, error)
+    bool isUploading() const { return m_uploading; }
     void unpin(const QString& cid);             // → unpinFinished
     void queryPinned(const QString& cid);       // → pinnedResult
     void queryRepoStat();                       // → repoStatResult(usedBytes)
@@ -84,6 +96,7 @@ signals:
     void healthChanged(const QString& state);
     void pinProgress(const QString& cid, qint64 blocks);   // reserved for storage events
     void pinFinished(const QString& cid, bool ok, const QString& error);
+    void uploadFinished(bool ok, const QString& cid, const QString& error);
     void unpinFinished(const QString& cid, bool ok, const QString& error);
     void pinnedResult(const QString& cid, bool pinned);
     void repoStatResult(qint64 usedBytes);
@@ -95,6 +108,8 @@ private:
     QString m_storageState = QStringLiteral("offline");
     QSet<QString> m_pinning;         // reentrancy guard per cid
     bool m_initInFlight = false;
+    bool m_uploading = false;        // storage contract: one upload in flight
+    bool m_uploadSubscribed = false;
 };
 
 #endif // STORAGE_CLIENT_H

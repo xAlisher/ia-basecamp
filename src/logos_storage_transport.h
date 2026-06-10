@@ -18,6 +18,9 @@ public:
     void initAndStart(const QString& dataDir, BoolCb cb) override;
     void ping(BoolCb cb) override;
     void fetch(const QString& cid, BoolCb cb) override;
+    void subscribeUploadDone(std::function<void(bool ok, const QString& cid,
+                                                const QString& error)> cb) override;
+    void upload(const QString& path, BoolCb cb) override;
     void removeCid(const QString& cid, BoolCb cb) override;
     void exists(const QString& cid, std::function<void(bool ok, bool held)> cb) override;
     void space(std::function<void(bool ok, qint64 usedBytes)> cb) override;

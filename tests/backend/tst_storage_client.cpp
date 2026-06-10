@@ -23,6 +23,17 @@ public:
     std::function<void(bool)> startedCb;   // the storageStart event hook
 
     void subscribeStarted(std::function<void(bool)> cb) override { startedCb = cb; }
+    std::function<void(bool, const QString&, const QString&)> uploadDoneCb;
+    bool uploadAccepted = true;
+    void subscribeUploadDone(std::function<void(bool, const QString&, const QString&)> cb) override
+    {
+        uploadDoneCb = cb;
+    }
+    void upload(const QString& path, BoolCb cb) override
+    {
+        calls << "upload:" + path;
+        cb(uploadAccepted, uploadAccepted ? QString() : QStringLiteral("upload_rejected"));
+    }
     void initAndStart(const QString& dataDir, BoolCb cb) override
     {
         calls << "initAndStart:" + dataDir;
@@ -207,6 +218,42 @@ private slots:
         QCOMPARE(res.last().at(1).toBool(), true);
         c.queryPinned(QStringLiteral("cid-other"));
         QCOMPARE(res.last().at(1).toBool(), false);
+    }
+
+    void upload_completesViaEvent()
+    {
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::uploadFinished);
+        c.upload(QStringLiteral("/tmp/f.bin"));
+        QCOMPARE(done.count(), 0);                       // accepted — waiting on the event
+        m_transport.uploadDoneCb(true, QStringLiteral("zDvZNewCid"), QString());
+        QCOMPARE(done.count(), 1);
+        QCOMPARE(done.last().at(0).toBool(), true);
+        QCOMPARE(done.last().at(1).toString(), QStringLiteral("zDvZNewCid"));
+        // a second upload works after completion
+        c.upload(QStringLiteral("/tmp/g.bin"));
+        QCOMPARE(m_transport.calls.count("upload:/tmp/g.bin"), 1);
+    }
+
+    void upload_singleInFlight()
+    {
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::uploadFinished);
+        c.upload(QStringLiteral("/tmp/a"));
+        c.upload(QStringLiteral("/tmp/b"));              // rejected by the guard
+        QCOMPARE(done.count(), 1);
+        QCOMPARE(done.last().at(2).toString(), QStringLiteral("upload_in_progress"));
+        QCOMPARE(m_transport.calls.count("upload:/tmp/b"), 0);
+    }
+
+    void upload_rejectionFailsImmediately()
+    {
+        m_transport.uploadAccepted = false;
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::uploadFinished);
+        c.upload(QStringLiteral("/tmp/a"));
+        QCOMPARE(done.last().at(0).toBool(), false);
+        QCOMPARE(done.last().at(2).toString(), QStringLiteral("upload_rejected"));
     }
 
     void repoStat_reportsUsedBytes()

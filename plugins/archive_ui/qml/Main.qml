@@ -533,14 +533,43 @@ Item {
                         radius: 8; color: root.bgSecondary; border.color: root.borderColor
                         RowLayout {
                             id: chRow
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
                             spacing: 8
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
-                                Label {
-                                    text: modelData.name || root.shortId(modelData.channelId) || "channel"
-                                    color: root.textPrimary; font.pixelSize: 13; font.bold: true
+                                RowLayout {
+                                    spacing: 6
+                                    Label {
+                                        visible: !labelEdit.visible
+                                        text: modelData.name || root.shortId(modelData.channelId) || "channel"
+                                        color: root.textPrimary; font.pixelSize: 13; font.bold: true
+                                    }
+                                    DarkField {
+                                        id: labelEdit
+                                        visible: false
+                                        implicitWidth: 180
+                                        font.pixelSize: 12
+                                        onAccepted: {
+                                            var R = root, id = modelData.channelId, t = text
+                                            visible = false
+                                            R.call("setChannelLabel", [id, t], function(r) {
+                                                if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
+                                            })
+                                        }
+                                        Keys.onEscapePressed: visible = false
+                                    }
+                                    ToolButton {
+                                        text: "✎"   // label this channel
+                                        visible: !labelEdit.visible
+                                        onClicked: {
+                                            labelEdit.text = modelData.label || ""
+                                            labelEdit.visible = true
+                                            labelEdit.forceActiveFocus()
+                                        }
+                                        contentItem: Label { text: parent.text; color: root.textMuted; font.pixelSize: 12 }
+                                        background: Rectangle { color: "transparent" }
+                                    }
                                 }
                                 Label {
                                     text: (modelData.curator ? "curator " + root.shortId(modelData.curator) + " · " : "")
@@ -548,41 +577,46 @@ Item {
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                             }
-                            Rectangle {
-                                implicitWidth: syncLbl.implicitWidth + 12; implicitHeight: 20; radius: 10
-                                color: "transparent"; border.color: modelData.synced ? root.successGreen : root.warningYellow
-                                Label {
-                                    id: syncLbl; anchors.centerIn: parent
-                                    text: modelData.synced ? "synced"
-                                          : "syncing " + (modelData.progress !== undefined
-                                                          ? modelData.progress + "%" : "…")
-                                    color: modelData.synced ? root.successGreen : root.warningYellow
-                                    font.pixelSize: 10
+                            // right-aligned action group — consistent gaps
+                            RowLayout {
+                                spacing: 6
+                                Layout.alignment: Qt.AlignVCenter
+                                Rectangle {
+                                    implicitWidth: syncLbl.implicitWidth + 12; implicitHeight: 20; radius: 10
+                                    color: "transparent"; border.color: modelData.synced ? root.successGreen : root.warningYellow
+                                    Label {
+                                        id: syncLbl; anchors.centerIn: parent
+                                        text: modelData.synced ? "synced"
+                                              : "syncing " + (modelData.progress !== undefined
+                                                              ? modelData.progress + "%" : "…")
+                                        color: modelData.synced ? root.successGreen : root.warningYellow
+                                        font.pixelSize: 10
+                                    }
                                 }
-                            }
-                            ToolButton {
-                                text: "↻"
-                                enabled: !!modelData.channelId
-                                onClicked: {
-                                    var R = root, id = modelData.channelId
-                                    R.call("refreshChannel", [id], function(r) {
-                                        if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id))
-                                    })
+                                ToolButton {
+                                    text: "↻"
+                                    enabled: !!modelData.channelId
+                                    onClicked: {
+                                        var R = root, id = modelData.channelId
+                                        R.call("refreshChannel", [id], function(r) {
+                                            if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id))
+                                        })
+                                    }
+                                    contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
+                                    background: Rectangle { color: "transparent" }
                                 }
-                                contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
-                                background: Rectangle { color: "transparent" }
-                            }
-                            ToolButton {
-                                text: "✕"
-                                enabled: !!modelData.channelId
-                                onClicked: {
-                                    var R = root, id = modelData.channelId
-                                    R.call("unfollowChannel", [id], function(r) {
-                                        if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id))
-                                    })
+                                ToolButton {
+                                    text: "✕"
+                                    enabled: !!modelData.channelId
+                                    onClicked: {
+                                        var R = root, id = modelData.channelId
+                                        R.call("unfollowChannel", [id], function(r) {
+                                            if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id))
+                                        })
+                                    }
+                                    contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
+                                    background: Rectangle { color: "transparent" }
                                 }
-                                contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
-                                background: Rectangle { color: "transparent" }
                             }
                         }
                     }
@@ -628,14 +662,14 @@ Item {
                         radius: 8; color: root.bgSecondary; border.color: root.borderColor
                         ColumnLayout {
                             id: colCol
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
                             spacing: 4
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
                                 Label {
                                     Layout.fillWidth: true
-                                    text: modelData.title || modelData.cid || "untitled"
+                                    text: modelData.iaId || modelData.title || modelData.cid || "untitled"
                                     color: root.textPrimary; font.pixelSize: 13; font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -646,8 +680,16 @@ Item {
                                         id: stLbl; anchors.centerIn: parent
                                         text: (modelData.state || "available")
                                               + (modelData.state === "mirroring" && modelData.progressBlocks > 0
-                                                 ? " · " + modelData.progressBlocks : "")
+                                                 ? " " + modelData.progressBlocks + "%" : "")
                                         color: root.mirrorColor(modelData.state); font.pixelSize: 10
+                                    }
+                                }
+                                DarkButton {
+                                    text: "Copy IA link"
+                                    enabled: !!modelData.iaId
+                                    onClicked: {
+                                        root.copyText("https://archive.org/details/" + modelData.iaId)
+                                        root.toast("Internet Archive link copied")
                                     }
                                 }
                                 AccentButton {
@@ -655,9 +697,7 @@ Item {
                                     text: "Preserve"
                                     enabled: modelData.state !== "mirroring" && !!modelData.id
                                     onClicked: {
-                                        // capture before the call: the bridge pumps the event
-                                        // loop and the delegate (with its context) can die
-                                        var R = root, t = modelData.title
+                                        var R = root, t = modelData.iaId || modelData.title
                                         R.toast("Preserving " + t + "…")
                                         R.call("mirrorCollection", [modelData.id], function(r) {
                                             if (r && r.ok) R.logEvent("mirror", "Preserving " + t)
@@ -670,7 +710,7 @@ Item {
                                     text: "Unpreserve"
                                     enabled: !!modelData.id
                                     onClicked: {
-                                        var R = root, t = modelData.title
+                                        var R = root, t = modelData.iaId || modelData.title
                                         R.call("unmirrorCollection", [modelData.id], function(r) {
                                             if (r && r.ok) { R.logEvent("mirror", "Unpreserving " + t); R.toast("Unpreserved " + t) }
                                             else R.toast("Unpreserve failed: " + (r ? r.error : "no response"))
@@ -682,34 +722,31 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
                                 Label {
-                                    text: (modelData.sizeBytes > 0 ? root.gb(modelData.sizeBytes) + " GB · " : "")
-                                          + (modelData.items > 0 ? modelData.items + " items · " : "")
-                                          + "slot " + (modelData.inscribedAt || "?")
+                                    visible: !!modelData.iaFile
+                                    text: modelData.iaFile || ""
                                     color: root.textSecondary; font.pixelSize: 11
-                                }
-                                Item { Layout.fillWidth: true }
-                                Label {
-                                    text: "tx " + root.shortId(modelData.txHash)
-                                    color: root.textMuted; font.pixelSize: 10
+                                    elide: Text.ElideMiddle
+                                    Layout.maximumWidth: 220
                                 }
                                 ToolButton {
-                                    text: "copy link"
+                                    text: "tx " + root.shortId(modelData.txHash)
                                     enabled: !!modelData.txHash
                                     onClicked: {
                                         root.copyText(root.explorerUrl(modelData.txHash))
-                                        root.logEvent("copy", "Provenance link copied — " + root.shortId(modelData.txHash))
                                         root.toast("Explorer link copied")
                                     }
-                                    contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 10 }
+                                    contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 11 }
                                     background: Rectangle { color: "transparent" }
                                 }
-                                ToolButton {
-                                    text: "share"
-                                    enabled: !!modelData.id
-                                    onClicked: { var R = root; R.shareScope(modelData.id) }
-                                    contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 10 }
-                                    background: Rectangle { color: "transparent" }
+                                Label {
+                                    text: "slot " + (modelData.inscribedAt || "?")
+                                    color: root.textSecondary; font.pixelSize: 11
                                 }
+                                Label {
+                                    text: "CID " + root.shortId(modelData.cid)
+                                    color: root.textMuted; font.pixelSize: 11
+                                }
+                                Item { Layout.fillWidth: true }
                             }
                         }
                     }

@@ -108,6 +108,30 @@ void LogosStorageTransport::initAndStart(const QString& dataDir, BoolCb cb)
                      : QStringLiteral("storage_init_failed"));
 }
 
+void LogosStorageTransport::subscribeUploadDone(
+    std::function<void(bool, const QString&, const QString&)> cb)
+{
+    // storageUploadDone: the CID is the last non-empty string arg (stash's parsing)
+    m_storage->on(QStringLiteral("storageUploadDone"), [cb](const QVariantList& d) {
+        QString cid;
+        for (auto it = d.rbegin(); it != d.rend(); ++it) {
+            if (it->canConvert<QString>() && !it->toString().isEmpty()) {
+                cid = it->toString();
+                break;
+            }
+        }
+        const bool ok = !d.isEmpty() && d.first().toBool() && !cid.isEmpty();
+        cb(ok, cid, ok ? QString() : QStringLiteral("upload_failed"));
+    });
+}
+
+void LogosStorageTransport::upload(const QString& path, BoolCb cb)
+{
+    constexpr int kLogosChunkSize = 65536;   // stash/keeper's chunking — reproduces CIDs
+    const LogosResult r = m_storage->uploadUrl(path, kLogosChunkSize);
+    cb(r.success, r.success ? QString() : errorOf(r));
+}
+
 void LogosStorageTransport::fetch(const QString& cid, BoolCb cb)
 {
     const LogosResult r = m_storage->fetch(cid);

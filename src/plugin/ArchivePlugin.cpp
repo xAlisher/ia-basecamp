@@ -3,10 +3,15 @@
 #include "logos_storage_transport.h"
 #include "share_helper.h"
 #include "storage_client.h"
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTimer>
@@ -59,10 +64,34 @@ void ArchivePlugin::initLogos(LogosAPI* api)
         if (pinOk) {
             m_lez->setCollectionState(collectionId, QStringLiteral("mirrored"));
             m_storage->queryRepoStat();
-        } else {
-            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
-            m_lastError = error;
+            return;
         }
+        // nobody on the network provides this CID — keeper's flow: pull the file
+        // from the Internet Archive and upload it, making US the provider
+        startReseed(collectionId, cid);
+        Q_UNUSED(error);
+    });
+    connect(m_storage, &StorageClient::uploadFinished, this,
+            [this](bool upOk, const QString& cid, const QString& error) {
+        if (m_reseedCollectionId.isEmpty())
+            return;
+        const QString collectionId = m_reseedCollectionId;
+        m_reseedCollectionId.clear();
+        if (!m_reseedTmpPath.isEmpty()) {
+            QFile::remove(m_reseedTmpPath);
+            m_reseedTmpPath.clear();
+        }
+        if (!upOk) {
+            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            m_lastError = QStringLiteral("reseed_upload_failed: ") + error;
+            return;
+        }
+        if (!cid.isEmpty() && cid != m_reseedCid)
+            qWarning() << "ArchivePlugin: reseeded CID differs from inscribed:" << cid
+                       << "vs" << m_reseedCid;   // content drifted at the source — still held
+        m_lez->setCollectionState(collectionId, QStringLiteral("mirrored"));
+        m_storage->queryRepoStat();
+        m_reseedCid.clear();
     });
     connect(m_storage, &StorageClient::unpinFinished, this,
             [this](const QString& cid, bool unpinOk, const QString& error) {
@@ -210,7 +239,81 @@ QString ArchivePlugin::getChannels()
     return ok({ { QStringLiteral("channels"), m_lez->channelsJson() } });
 }
 
+QString ArchivePlugin::setChannelLabel(const QString& channelId, const QString& label)
+{
+    if (!m_lez->setChannelLabel(channelId, label))
+        return fail(QStringLiteral("not_followed"));
+    return ok({ { QStringLiteral("channelId"), channelId.toLower() },
+                { QStringLiteral("label"), label.left(64) } });
+}
+
 // ── collections + preserve ──────────────────────────────────────────────────
+
+void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
+{
+    // resolve the IA source from the inscription's keeper conventions
+    QString iaId, iaFile;
+    for (const QJsonValue& v : m_lez->collectionsJson()) {
+        const QJsonObject c = v.toObject();
+        if (c.value(QStringLiteral("id")).toString() == collectionId) {
+            iaId = c.value(QStringLiteral("iaId")).toString();
+            iaFile = c.value(QStringLiteral("iaFile")).toString();
+            break;
+        }
+    }
+    if (iaId.isEmpty() || iaFile.isEmpty()) {
+        m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+        m_lastError = QStringLiteral("not_on_network_and_no_ia_source");
+        return;
+    }
+    if (!m_reseedCollectionId.isEmpty()) {
+        m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+        m_lastError = QStringLiteral("reseed_busy");
+        return;
+    }
+    m_reseedCollectionId = collectionId;
+    m_reseedCid = cid;
+
+    if (!m_nam)
+        m_nam = new QNetworkAccessManager(this);
+    const QUrl url(QStringLiteral("https://archive.org/download/%1/%2").arg(iaId, iaFile));
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "ia-basecamp/0.2");
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                     QNetworkRequest::NoLessSafeRedirectPolicy);   // IA always redirects
+    QNetworkReply* reply = m_nam->get(req);
+
+    const QString tmpPath = QDir::tempPath()
+        + QStringLiteral("/ia-archive-%1-%2")
+              .arg(QString(iaId).replace(QLatin1Char('/'), QLatin1Char('_')),
+                   QString(iaFile).replace(QLatin1Char('/'), QLatin1Char('_')));
+    auto* out = new QFile(tmpPath, reply);
+    out->open(QIODevice::WriteOnly | QIODevice::Truncate);
+    m_reseedTmpPath = tmpPath;
+
+    connect(reply, &QNetworkReply::readyRead, this, [reply, out] {
+        out->write(reply->readAll());
+    });
+    connect(reply, &QNetworkReply::downloadProgress, this,
+            [this, collectionId](qint64 recv, qint64 total) {
+        const int pct = total > 0 ? int(recv * 100 / total) : 0;
+        m_lez->setCollectionState(collectionId, QStringLiteral("mirroring"), pct);
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, out, collectionId, tmpPath] {
+        out->close();
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            QFile::remove(tmpPath);
+            m_reseedCollectionId.clear();
+            m_reseedTmpPath.clear();
+            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            m_lastError = QStringLiteral("ia_download_failed: ") + reply->errorString();
+            return;
+        }
+        // hand the bytes to Logos Storage — completion via uploadFinished above
+        m_storage->upload(tmpPath);
+    });
+}
 
 QString ArchivePlugin::getCollections(const QString& channelId)
 {

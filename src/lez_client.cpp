@@ -195,11 +195,46 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
                 c.items = man.value(QLatin1String("items")).toVariant().toLongLong();
                 c.thumbnail = jsonStr(man, "thumbnail");
                 c.state = QStringLiteral("available");
+                deriveIaRef(c.cid, jsonStr(man, "label"), &c.iaId, &c.iaFile);
                 out.append(c);
             }
         }
     }
     return out;
+}
+
+// keeper's cid_pin conventions carry the IA reference two ways:
+//   cid:   "ia:<identifier>"                          → whole item
+//   label: "Logos Storage: keeper-<id>-<file> → …"    → one file of an item
+// (<id> may contain '-'; the filename is the part from the last '-' before
+//  the first dotted segment)
+void LezClient::deriveIaRef(const QString& cid, const QString& label,
+                            QString* iaId, QString* iaFile)
+{
+    iaId->clear();
+    iaFile->clear();
+    if (cid.startsWith(QLatin1String("ia:"))) {
+        *iaId = cid.mid(3);
+        return;
+    }
+    static const QRegularExpression prefixRe(
+        QStringLiteral("^Logos Storage: keeper-(.+?)(?:\\s*\\x{2192}.*)?$"));
+    const QRegularExpressionMatch m = prefixRe.match(label);
+    if (!m.hasMatch())
+        return;
+    const QString rest = m.captured(1).trimmed();   // "<id>-<file>"
+    const int dot = rest.indexOf(QLatin1Char('.'));
+    if (dot < 0) {
+        *iaId = rest;
+        return;
+    }
+    const int split = rest.lastIndexOf(QLatin1Char('-'), dot);
+    if (split <= 0) {
+        *iaId = rest;
+        return;
+    }
+    *iaId = rest.left(split);
+    *iaFile = rest.mid(split + 1);
 }
 
 // ── follow / refresh ─────────────────────────────────────────────────────────
@@ -228,6 +263,17 @@ QString LezClient::followChannel(const QString& ref, QString* errorCode)
     emit channelsChanged();
     startScan(channelId);
     return channelId;
+}
+
+bool LezClient::setChannelLabel(const QString& channelId, const QString& label)
+{
+    const QString id = channelId.toLower();
+    if (!m_channels.contains(id))
+        return false;
+    m_channels[id].label = label.left(64);
+    saveState();
+    emit channelsChanged();
+    return true;
 }
 
 bool LezClient::unfollowChannel(const QString& channelId)
@@ -359,7 +405,7 @@ QJsonArray LezClient::channelsJson() const
     for (const Channel& ch : m_channels) {
         QJsonObject row{
             { QStringLiteral("channelId"), ch.channelId },
-            { QStringLiteral("name"), ch.channelId.left(8) },
+            { QStringLiteral("name"), ch.label.isEmpty() ? ch.channelId.left(8) : ch.label },
             { QStringLiteral("curator"), ch.curator },
             { QStringLiteral("collections"), ch.collections.size() },
             { QStringLiteral("lastInscription"), ch.lastInscription },
@@ -394,6 +440,8 @@ QJsonArray LezClient::collectionsJson(const QString& channelId) const
                 { QStringLiteral("curator"), c.curator },
                 { QStringLiteral("state"), c.state },
                 { QStringLiteral("progressBlocks"), c.progressBlocks },
+                { QStringLiteral("iaId"), c.iaId },
+                { QStringLiteral("iaFile"), c.iaFile },
             });
         }
     }
@@ -489,10 +537,13 @@ void LezClient::saveState() const
                 { QStringLiteral("txHash"), c.txHash },
                 { QStringLiteral("curator"), c.curator },
                 { QStringLiteral("state"), c.state },
+                { QStringLiteral("iaId"), c.iaId },
+                { QStringLiteral("iaFile"), c.iaFile },
             });
         }
         chans.append(QJsonObject{
             { QStringLiteral("channelId"), ch.channelId },
+            { QStringLiteral("label"), ch.label },
             { QStringLiteral("startSlot"), ch.startSlot },
             { QStringLiteral("cursor"), ch.cursor },
             { QStringLiteral("lastInscription"), ch.lastInscription },
@@ -551,6 +602,7 @@ void LezClient::loadState()
         const QJsonObject co = cv.toObject();
         Channel ch;
         ch.channelId = jsonStr(co, "channelId");
+        ch.label = jsonStr(co, "label");
         ch.startSlot = co.value(QLatin1String("startSlot")).toVariant().toLongLong();
         ch.cursor = co.value(QLatin1String("cursor")).toVariant().toLongLong();
         ch.lastInscription = co.value(QLatin1String("lastInscription")).toVariant().toLongLong();
@@ -570,6 +622,8 @@ void LezClient::loadState()
             col.txHash = jsonStr(c, "txHash");
             col.curator = jsonStr(c, "curator");
             col.state = jsonStr(c, "state");
+            col.iaId = jsonStr(c, "iaId");
+            col.iaFile = jsonStr(c, "iaFile");
             if (col.state == QLatin1String("mirroring"))   // no pin survives a restart
                 col.state = QStringLiteral("available");
             ch.collections.append(col);

@@ -64,6 +64,32 @@ void StorageClient::pin(const QString& cid)
     });
 }
 
+void StorageClient::upload(const QString& path)
+{
+    if (m_uploading) {
+        emit uploadFinished(false, QString(), QStringLiteral("upload_in_progress"));
+        return;
+    }
+    m_uploading = true;
+    if (!m_uploadSubscribed) {
+        m_uploadSubscribed = true;
+        m_transport->subscribeUploadDone(
+            [this](bool ok, const QString& cid, const QString& error) {
+                if (!m_uploading)
+                    return;   // stray event from another consumer
+                m_uploading = false;
+                emit uploadFinished(ok, cid, error);
+            });
+    }
+    m_transport->upload(path, [this](bool accepted, const QString& error) {
+        if (!accepted) {
+            m_uploading = false;
+            emit uploadFinished(false, QString(), error);
+        }
+        // accepted → completion arrives via the storageUploadDone event
+    });
+}
+
 void StorageClient::unpin(const QString& cid)
 {
     m_transport->removeCid(cid, [this, cid](bool ok, const QString& error) {

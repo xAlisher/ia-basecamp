@@ -10,6 +10,7 @@
 #include "interface.h"
 
 class LogosAPI;
+class QNetworkAccessManager;
 class QTimer;
 class LezClient;
 class StorageClient;
@@ -54,6 +55,7 @@ public:
     Q_INVOKABLE QString unfollowChannel(const QString& channelId);
     Q_INVOKABLE QString refreshChannel(const QString& channelId);
     Q_INVOKABLE QString getChannels();                          // {ok, channels:[...]}
+    Q_INVOKABLE QString setChannelLabel(const QString& channelId, const QString& label);
 
     // ── collections + preserve (Logos Storage) ───────────────────────────────
     Q_INVOKABLE QString getCollections(const QString& channelId);  // "" = all followed
@@ -83,4 +85,12 @@ private:
     QHash<QString, QString> m_cidToCollection;   // in-flight pin/unpin → collection id
     qint64         m_usedBytes = 0;
     QString        m_lastError;
+
+    // preserve-by-reseed (keeper's flow): fetch failed → download the file from the
+    // Internet Archive → upload into Logos Storage (we become the provider)
+    void startReseed(const QString& collectionId, const QString& cid);
+    QNetworkAccessManager* m_nam = nullptr;
+    QString m_reseedCollectionId;   // one re-seed at a time (upload contract)
+    QString m_reseedCid;
+    QString m_reseedTmpPath;
 };

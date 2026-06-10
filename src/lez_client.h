@@ -38,10 +38,13 @@ public:
         QString curator;     // inscription signer
         QString state;       // available | mirroring | mirrored | error (P2 drives this)
         qint64  progressBlocks = 0;   // transient pin progress while state == mirroring
+        QString iaId;        // Internet Archive identifier (keeper cid_pin convention)
+        QString iaFile;      // file within the IA item — empty = whole item
     };
 
     struct Channel {
         QString channelId;
+        QString label;             // user-given name (edit icon in the UI)
         qint64  startSlot = 0;     // where history scanning begins
         qint64  cursor = 0;        // last finalized slot already scanned
         qint64  lastInscription = 0;
@@ -80,6 +83,7 @@ public:
     bool unfollowChannel(const QString& channelId);
     bool refreshChannel(const QString& channelId);   // async scan; false if not followed/busy
     bool isFollowed(const QString& channelId) const { return m_channels.contains(channelId); }
+    bool setChannelLabel(const QString& channelId, const QString& label);
 
     QJsonArray channelsJson() const;
     QJsonArray collectionsJson(const QString& channelId = QString()) const;
@@ -97,6 +101,8 @@ public:
     static QString stateFilePath();
 
     // exposed for tests
+    static void deriveIaRef(const QString& cid, const QString& label,
+                            QString* iaId, QString* iaFile);
     static QString parseChannelRef(const QString& ref, qint64* startSlot, QString* errorCode);
     static QVector<Collection> extractCollections(const QJsonArray& blocks,
                                                   const QString& channelId, qint64 libSlot);
