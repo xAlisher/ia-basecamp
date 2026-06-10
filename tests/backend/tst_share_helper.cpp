@@ -43,7 +43,7 @@ private slots:
             col("c2", "Books", 1500000000, "mirrored"),
             col("c3", "Films", 9000000000, "available"),   // not preserved → excluded
         };
-        const QJsonObject d = ShareHelper::buildShareData(cols, "me");
+        const QJsonObject d = ShareHelper::buildShareData(cols, "me", "http://gw:5001");
         QVERIFY(d.value("ok").toBool());
         QCOMPARE(d.value("count").toInt(), 2);
         QCOMPARE(d.value("totalGB").toDouble(), 3.5);
@@ -51,7 +51,7 @@ private slots:
         QCOMPARE(d.value("items").toArray()[0].toObject().value("name").toString(),
                  QStringLiteral("Maps"));
         QCOMPARE(d.value("items").toArray()[0].toObject().value("thumbnail").toString(),
-                 QStringLiteral("thumb-1"));
+                 QStringLiteral("http://gw:5001/ipfs/thumb-1"));
     }
 
     void shareData_me_emptyWhenNothingMirrored()
@@ -78,6 +78,32 @@ private slots:
         const QJsonObject d = ShareHelper::buildShareData({}, "nope");
         QCOMPARE(d.value("ok").toBool(), false);
         QCOMPARE(d.value("error").toString(), QStringLiteral("unknown_collection"));
+    }
+
+    void thumbnails_onlyCidShapedResolved()
+    {
+        // Senty P6 HIGH: chain-inscribed URLs must never reach Image.source
+        const QString base = "http://gw:5001";
+        QCOMPARE(ShareHelper::resolveThumbnail("ia:kuMUquaeE6g", base),
+                 QStringLiteral("http://gw:5001/ipfs/ia:kuMUquaeE6g"));
+        QCOMPARE(ShareHelper::resolveThumbnail("QmThumb123", base),
+                 QStringLiteral("http://gw:5001/ipfs/QmThumb123"));
+        QVERIFY(ShareHelper::resolveThumbnail("https://evil.example/x.png", base).isEmpty());
+        QVERIFY(ShareHelper::resolveThumbnail("file:///etc/passwd", base).isEmpty());
+        QVERIFY(ShareHelper::resolveThumbnail("../../x", base).isEmpty());
+        QVERIFY(ShareHelper::resolveThumbnail("cid", QString()).isEmpty());   // no gateway → placeholder
+
+        const QJsonArray cols{ col("c1", "Maps", 1, "mirrored", "https://evil.example/x") };
+        const QJsonObject d = ShareHelper::buildShareData(cols, "me", base);
+        QVERIFY(d.value("items").toArray()[0].toObject().value("thumbnail").toString().isEmpty());
+    }
+
+    void savePng_rejectsOversized()
+    {
+        QTemporaryDir dir;
+        QString huge(17 * 1024 * 1024, QLatin1Char('A'));
+        QCOMPARE(ShareHelper::savePngBase64(dir.path(), "x", huge).value("error").toString(),
+                 QStringLiteral("png_too_large"));
     }
 
     void sanitize_stripsTraversal()

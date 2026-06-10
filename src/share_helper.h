@@ -12,7 +12,14 @@ namespace ShareHelper {
 // scope "me": everything the user mirrors (the contribution card).
 // scope <collectionId>: that one collection (the collection card).
 // Returns {ok:false,error} for an unknown collection id or an empty "me" scope.
-QJsonObject buildShareData(const QJsonArray& collections, const QString& scope);
+// Thumbnails are chain-inscribed (untrusted): a value is only emitted when it is a
+// bare CID-shaped token, resolved against `thumbnailBase` (the gateway's storage
+// endpoint) — full URLs from manifests are never passed through to the UI.
+QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
+                           const QString& thumbnailBase = QString());
+
+// CID-shaped (letters/digits/:/-/_/.), no scheme, no slashes — else empty.
+QString resolveThumbnail(const QString& thumbnail, const QString& base);
 
 // Decodes base64 PNG data and writes <dir>/<sanitized name>.png atomically.
 // Validates the PNG magic — QML's grabToImage must have produced a real image.

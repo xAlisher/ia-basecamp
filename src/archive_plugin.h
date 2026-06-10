@@ -48,6 +48,7 @@ public:
     QString revealCard(QString path) override;
 
 private:
+    static QString cardsDir();   // Pictures/ia-archive — the only folder revealCard opens
     void pollGatewayHealth();    // ping gateway node + storage, compute syncLagBlocks (LEZ#519)
     void publishReadState();     // rebuild channelsJson/collectionsJson/summaryJson PROPs
     void syncStorageEndpoint();  // point storage at gateway storageUrl (delegate) or local node

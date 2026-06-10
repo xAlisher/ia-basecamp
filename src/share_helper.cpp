@@ -19,18 +19,30 @@ double toGb(qint64 bytes)
     return static_cast<double>(bytes) / 1e9;
 }
 
-QJsonObject itemFor(const QJsonObject& c)
+QJsonObject itemFor(const QJsonObject& c, const QString& thumbnailBase)
 {
     return {
         { QStringLiteral("name"), c.value(QLatin1String("title")).toString() },
         { QStringLiteral("sizeGB"), toGb(c.value(QLatin1String("sizeBytes")).toVariant().toLongLong()) },
-        { QStringLiteral("thumbnail"), c.value(QLatin1String("thumbnail")).toString() },
+        { QStringLiteral("thumbnail"),
+          resolveThumbnail(c.value(QLatin1String("thumbnail")).toString(), thumbnailBase) },
     };
 }
 
 } // namespace
 
-QJsonObject buildShareData(const QJsonArray& collections, const QString& scope)
+QString resolveThumbnail(const QString& thumbnail, const QString& base)
+{
+    if (thumbnail.isEmpty() || base.isEmpty())
+        return {};
+    static const QRegularExpression cidShape(QStringLiteral("^[A-Za-z0-9:._-]{1,128}$"));
+    if (!cidShape.match(thumbnail).hasMatch())
+        return {};   // a URL or anything exotic from the chain never reaches Image.source
+    return base + QStringLiteral("/ipfs/") + thumbnail;
+}
+
+QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
+                           const QString& thumbnailBase)
 {
     QJsonArray items;
     qint64 totalBytes = 0;
@@ -40,7 +52,7 @@ QJsonObject buildShareData(const QJsonArray& collections, const QString& scope)
             const QJsonObject c = v.toObject();
             if (c.value(QLatin1String("state")).toString() != QLatin1String("mirrored"))
                 continue;
-            items.append(itemFor(c));
+            items.append(itemFor(c, thumbnailBase));
             totalBytes += c.value(QLatin1String("sizeBytes")).toVariant().toLongLong();
         }
         if (items.isEmpty())
@@ -66,7 +78,7 @@ QJsonObject buildShareData(const QJsonArray& collections, const QString& scope)
             { QStringLiteral("totalGB"), toGb(c.value(QLatin1String("sizeBytes")).toVariant().toLongLong()) },
             { QStringLiteral("count"), 1 },
             { QStringLiteral("txHash"), c.value(QLatin1String("txHash")).toString() },
-            { QStringLiteral("items"), QJsonArray{ itemFor(c) } },
+            { QStringLiteral("items"), QJsonArray{ itemFor(c, thumbnailBase) } },
         };
     }
     return fail(QStringLiteral("unknown_collection"));
@@ -85,6 +97,11 @@ QJsonObject savePngBase64(const QString& dir, const QString& name, const QString
     const QString safeName = sanitizeName(name);
     if (safeName.isEmpty())
         return fail(QStringLiteral("invalid_name"));
+
+    // a 1200×675 card is ~1–3 MB; anything past this cap is hostile, refuse the allocation
+    constexpr qsizetype kMaxBase64Chars = 16 * 1024 * 1024;
+    if (pngBase64.size() > kMaxBase64Chars)
+        return fail(QStringLiteral("png_too_large"));
 
     const QByteArray png =
         QByteArray::fromBase64(pngBase64.toLatin1(), QByteArray::AbortOnBase64DecodingErrors);

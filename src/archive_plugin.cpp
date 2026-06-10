@@ -265,17 +265,27 @@ QString ArchivePlugin::getMirrorStatus(QString collectionId)
 
 // ── share cards (SPEC §12) ──────────────────────────────────────────────────
 
+QString ArchivePlugin::cardsDir()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
+           + QStringLiteral("/ia-archive");
+}
+
 QString ArchivePlugin::getShareData(QString scope)
 {
-    const QJsonObject data = ShareHelper::buildShareData(m_lez->collectionsJson(), scope);
+    // thumbnails resolve only against the active gateway's storage endpoint —
+    // chain-inscribed URL strings never reach Image.source (Senty P6 HIGH)
+    const auto gws = m_lez->gateways();
+    const QString thumbBase =
+        gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).storageUrl;
+    const QJsonObject data =
+        ShareHelper::buildShareData(m_lez->collectionsJson(), scope, thumbBase);
     return QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact));
 }
 
 QString ArchivePlugin::saveShareCard(QString pngBase64, QString name)
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
-                        + QStringLiteral("/ia-archive");
-    const QJsonObject r = ShareHelper::savePngBase64(dir, name, pngBase64);
+    const QJsonObject r = ShareHelper::savePngBase64(cardsDir(), name, pngBase64);
     if (!r.value(QStringLiteral("ok")).toBool())
         setLastError(r.value(QStringLiteral("error")).toString());
     return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
@@ -283,12 +293,17 @@ QString ArchivePlugin::saveShareCard(QString pngBase64, QString name)
 
 QString ArchivePlugin::revealCard(QString path)
 {
-    // backend runs in ui-host (no QML sandbox) — open the folder, never the file
-    // (a folder open can't execute anything)
+    // scoped strictly to the app's own card directory — an arbitrary path must not
+    // open arbitrary folders (or UNC shares); canonicalization defeats symlink games
     const QFileInfo fi(path);
-    if (!fi.exists() || fi.suffix() != QLatin1String("png"))
+    const QString canonical = fi.canonicalFilePath();
+    const QString dirCanonical = QFileInfo(cardsDir()).canonicalFilePath();
+    if (canonical.isEmpty() || dirCanonical.isEmpty()
+        || !canonical.startsWith(dirCanonical + QLatin1Char('/'))
+        || fi.suffix() != QLatin1String("png"))
         return fail(QStringLiteral("no_such_card"));
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath())))
+    // open the folder, never the file — a folder open can't execute anything
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(dirCanonical)))
         return fail(QStringLiteral("cannot_open_folder"));
-    return ok({ { QStringLiteral("path"), fi.absoluteFilePath() } });
+    return ok({ { QStringLiteral("path"), canonical } });
 }

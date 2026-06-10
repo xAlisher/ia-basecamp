@@ -106,9 +106,12 @@ Item {
     // ── Share cards (SPEC §12): getShareData → ShareCard render → grabToImage →
     //    Canvas toDataURL → saveShareCard(pngBase64) → revealCard ────────────────
     property var shareData: null
+    property bool shareBusy: false       // one export at a time — racing grabs would clobber
     function shareScope(scope) {
+        if (shareBusy) return
+        shareBusy = true
         call("getShareData", [scope], function(r) {
-            if (!r || r.ok === false) return
+            if (!r || r.ok === false) { root.shareBusy = false; return }
             root.shareData = r
             shareSettleTimer.restart()   // one tick for bindings to settle before the grab
         })
@@ -143,6 +146,7 @@ Item {
                                          ? "contribution" : "collection")
                        + "-" + Qt.formatDateTime(new Date(), "yyyyMMdd-hhmmss")
             root.call("saveShareCard", [b64, name], function(r) {
+                root.shareBusy = false
                 if (r && r.ok) {
                     root.logEvent("share", "Card saved — " + r.path)
                     root.call("revealCard", [r.path], null)
