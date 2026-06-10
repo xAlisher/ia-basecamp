@@ -32,3 +32,25 @@ at the type level before any client code was written.
 **Win** · the standalone `nix run .` harness is a complete P0 verifier for ui_qml-with-backend
 modules: plugin load, initLogos, QRO remoting, QML replica sync — all greppable. Now codified
 as `tests/integration/standalone_load_test.sh`.
+
+## 2026-06-10 — P1 (issue #3)
+
+**Fail** · first test run of the failure-path tests · guarded `healthChanged` emission behind
+"only when state changes" while the initial state was already `offline` — the first real
+failure never notified anyone. Root cause: change-guards assume the initial value is a
+non-signal value; on failure paths emit unconditionally (PROP sets are idempotent).
+→ docs/skills/async-scan-generation-guard.md (related rule).
+
+**Fail** · `setGateways` auto-polled health as a UX nicety · made every test's request flow
+nondeterministic (two in-flight polls double-rotated failover). Root cause: side-effectful
+config setters; the poll belongs to the caller (the plugin SLOT polls explicitly).
+
+**Win** · Senty round 1 on real C++ caught a genuine async-ownership bug (in-flight scan
+adopting a re-followed channel of the same id) that all 19 green tests missed — adversarial
+review pays exactly where async lifetimes meet user-driven state mutation. Pattern + regression
+test extracted → docs/skills/async-scan-generation-guard.md.
+
+**Win** · test pyramid for an HTTP backend module: 19 deterministic QTest cases against a
+60-line QTcpServer mock (33ms, no display, no network) + one env-gated live test
+(`ARCHIVE_LIVE_NODE=…`) that ran the production client against the real chain and decoded the
+spike's exact on-chain artifact. Deterministic for CI, live for runtime proof — both green.
