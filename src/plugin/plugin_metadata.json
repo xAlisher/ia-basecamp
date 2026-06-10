@@ -1,0 +1,10 @@
+{
+  "author": "xAlisher",
+  "category": "storage",
+  "dependencies": ["storage_module"],
+  "description": "Archive — follow curated LEZ channels, preserve collections to Logos Storage",
+  "main": "archive_plugin",
+  "name": "archive",
+  "type": "core",
+  "version": "0.2.0"
+}

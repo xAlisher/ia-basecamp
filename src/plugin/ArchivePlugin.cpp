@@ -1,13 +1,13 @@
-#include "archive_plugin.h"
+#include "ArchivePlugin.h"
 #include "lez_client.h"
 #include "logos_storage_transport.h"
 #include "share_helper.h"
 #include "storage_client.h"
-#include <QDesktopServices>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -26,10 +26,9 @@ QString fail(const QString& code)
     const QJsonObject o{ { QStringLiteral("ok"), false }, { QStringLiteral("error"), code } };
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
-
 } // namespace
 
-ArchivePlugin::ArchivePlugin(QObject* parent) : ArchiveSimpleSource(parent) {}
+ArchivePlugin::ArchivePlugin(QObject* parent) : QObject(parent) {}
 ArchivePlugin::~ArchivePlugin() = default;
 
 void ArchivePlugin::initLogos(LogosAPI* api)
@@ -37,11 +36,9 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     if (m_lez) return;
     m_logosAPI = api;
     m_lez = new LezClient(this);           // gateway node reads (SPEC §4.1) — pure HTTP
-    // Preserve goes ONLY to Logos Storage via the platform storage_module (stash's path).
-    // Constructing the typed client calls LogosAPI::getClient on the HOST's LogosAPI
-    // object — on a ui-host whose liblogos revision differs from the builder's SDK this
-    // reads garbage and throws bad_alloc (see docs/spikes/uihost-getclient-abi-crash.md).
-    // The module must survive that: degrade to offline storage, never kill the host.
+    // Preserve goes ONLY to Logos Storage via the platform storage_module — from
+    // logos_host, the proven stash path. The guard stays for safety (a mismatched
+    // host must degrade to offline storage, never die).
     try {
         m_transport.reset(new LogosStorageTransport(api));
     } catch (const std::exception& e) {
@@ -51,21 +48,8 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     }
     m_storage = new StorageClient(m_transport.get(), this);
 
-    connect(m_lez, &LezClient::healthChanged, this, [this](const QString& state, qint64 lag) {
-        setGatewayState(state);
-        setSyncLagBlocks(static_cast<int>(qMin<qint64>(lag, INT_MAX)));
-    });
-    connect(m_lez, &LezClient::channelsChanged, this, [this] { publishReadState(); });
-    connect(m_lez, &LezClient::collectionsChanged, this, [this] { publishReadState(); });
     connect(m_lez, &LezClient::errorOccurred, this, [this](const QString& code) {
-        setLastError(code);
-    });
-
-    connect(m_storage, &StorageClient::healthChanged, this, [this](const QString& state) {
-        setStorageState(state);
-    });
-    connect(m_storage, &StorageClient::pinProgress, this, [this](const QString& cid, qint64 blocks) {
-        m_lez->setCollectionState(m_cidToCollection.value(cid), QStringLiteral("mirroring"), blocks);
+        m_lastError = code;
     });
     connect(m_storage, &StorageClient::pinFinished, this,
             [this](const QString& cid, bool pinOk, const QString& error) {
@@ -75,7 +59,7 @@ void ArchivePlugin::initLogos(LogosAPI* api)
             m_storage->queryRepoStat();
         } else {
             m_lez->setCollectionState(collectionId, QStringLiteral("error"));
-            setLastError(error);
+            m_lastError = error;
         }
     });
     connect(m_storage, &StorageClient::unpinFinished, this,
@@ -86,31 +70,25 @@ void ArchivePlugin::initLogos(LogosAPI* api)
             m_storage->queryRepoStat();
         } else {
             m_lez->setCollectionState(collectionId, QStringLiteral("error"));
-            setLastError(error);
+            m_lastError = error;
         }
     });
-    connect(m_storage, &StorageClient::repoStatResult, this, [this](qint64 usedBytes) {
-        m_usedBytes = usedBytes;
-        publishReadState();
-    });
+    connect(m_storage, &StorageClient::repoStatResult, this,
+            [this](qint64 usedBytes) { m_usedBytes = usedBytes; });
 
     m_lez->loadState();
-    setPreserveMode(m_lez->preserveMode());
-    publishReadState();
-    setBackend(this);                      // register as the QRO source for the QML replica
 
     m_healthTimer = new QTimer(this);
     connect(m_healthTimer, &QTimer::timeout, this, [this]{ pollGatewayHealth(); });
     m_healthTimer->start(10000);
     QTimer::singleShot(1500, this, [this]{ pollGatewayHealth(); });
-    // storage bring-up deferred — start() can take ~30s server-side; never block initLogos
     QTimer::singleShot(0, this, [this] {
         const QString dataDir =
             QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
             + QStringLiteral("/ia-archive/storage");
         m_storage->initStorage(dataDir);
     });
-    qDebug() << "ArchivePlugin: initLogos done (HTTP-client backend)";
+    qDebug() << "ArchivePlugin: initLogos done (core module, stash shape)";
 }
 
 void ArchivePlugin::pollGatewayHealth()
@@ -121,18 +99,29 @@ void ArchivePlugin::pollGatewayHealth()
     m_storage->pollHealth();
 }
 
-void ArchivePlugin::publishReadState()
+// ── status ──────────────────────────────────────────────────────────────────
+
+QString ArchivePlugin::getStatus()
 {
-    setChannelsJson(QString::fromUtf8(QJsonDocument(m_lez->channelsJson()).toJson(QJsonDocument::Compact)));
-    setCollectionsJson(QString::fromUtf8(QJsonDocument(m_lez->collectionsJson()).toJson(QJsonDocument::Compact)));
+    if (!m_lez)
+        return fail(QStringLiteral("not_initialized"));
     QJsonObject summary = m_lez->summaryJson();
     summary.insert(QStringLiteral("usedBytes"), m_usedBytes);
-    setSummaryJson(QString::fromUtf8(QJsonDocument(summary).toJson(QJsonDocument::Compact)));
+    return ok({
+        { QStringLiteral("gatewayState"), m_lez->gatewayState() },
+        { QStringLiteral("syncLagBlocks"), m_lez->syncLagSlots() },
+        { QStringLiteral("storageState"), m_storage->storageState() },
+        { QStringLiteral("preserveMode"), m_lez->preserveMode() },
+        { QStringLiteral("lastError"), m_lastError },
+        { QStringLiteral("activeGateway"), m_lez->activeGateway() },
+        { QStringLiteral("gateways"), m_lez->gateways().size() },
+        { QStringLiteral("summary"), summary },
+    });
 }
 
 // ── config ──────────────────────────────────────────────────────────────────
 
-QString ArchivePlugin::setGateways(QString jsonList)
+QString ArchivePlugin::setGateways(const QString& jsonList)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(jsonList.toUtf8());
     if (!doc.isArray())
@@ -140,7 +129,6 @@ QString ArchivePlugin::setGateways(QString jsonList)
     QList<LezClient::Gateway> gws;
     for (const QJsonValue& v : doc.array()) {
         const QJsonObject o = v.toObject();
-        // "nodeUrl" per SPEC §4.1; "indexerUrl" accepted for .rep comment compatibility
         QString node = o.value(QStringLiteral("nodeUrl")).toString();
         if (node.isEmpty())
             node = o.value(QStringLiteral("indexerUrl")).toString();
@@ -156,52 +144,39 @@ QString ArchivePlugin::setGateways(QString jsonList)
     if (gws.isEmpty())
         return fail(QStringLiteral("empty_gateway_list"));
     m_lez->setGateways(gws);
-    m_lez->pollHealth();   // immediate feedback on the new gateway
+    m_lez->pollHealth();
     return ok({ { QStringLiteral("count"), gws.size() } });
 }
 
-QString ArchivePlugin::choosePreserveMode(QString mode)
+QString ArchivePlugin::choosePreserveMode(const QString& mode)
 {
     if (mode != QLatin1String("delegate") && mode != QLatin1String("local"))
         return fail(QStringLiteral("invalid_mode"));
     m_lez->setPreserveMode(mode);
-    setPreserveMode(mode);
     return ok({ { QStringLiteral("mode"), mode } });
-}
-
-QString ArchivePlugin::getStatus()
-{
-    return ok({
-        { QStringLiteral("gatewayState"), m_lez->gatewayState() },
-        { QStringLiteral("syncLagBlocks"), m_lez->syncLagSlots() },
-        { QStringLiteral("activeGateway"), m_lez->activeGateway() },
-        { QStringLiteral("gateways"), m_lez->gateways().size() },
-        { QStringLiteral("preserveMode"), m_lez->preserveMode() },
-        { QStringLiteral("summary"), m_lez->summaryJson() },
-    });
 }
 
 // ── channels ────────────────────────────────────────────────────────────────
 
-QString ArchivePlugin::followChannel(QString channelRef)
+QString ArchivePlugin::followChannel(const QString& channelRef)
 {
     QString err;
     const QString id = m_lez->followChannel(channelRef, &err);
     if (id.isEmpty()) {
-        setLastError(err);
+        m_lastError = err;
         return fail(err);
     }
     return ok({ { QStringLiteral("channelId"), id } });
 }
 
-QString ArchivePlugin::unfollowChannel(QString channelId)
+QString ArchivePlugin::unfollowChannel(const QString& channelId)
 {
     if (!m_lez->unfollowChannel(channelId))
         return fail(QStringLiteral("not_followed"));
     return ok({ { QStringLiteral("channelId"), channelId.toLower() } });
 }
 
-QString ArchivePlugin::refreshChannel(QString channelId)
+QString ArchivePlugin::refreshChannel(const QString& channelId)
 {
     if (!m_lez->refreshChannel(channelId))
         return fail(m_lez->isFollowed(channelId.toLower())
@@ -210,22 +185,25 @@ QString ArchivePlugin::refreshChannel(QString channelId)
     return ok({ { QStringLiteral("channelId"), channelId.toLower() } });
 }
 
-QString ArchivePlugin::getCollections(QString channelId)
+QString ArchivePlugin::getChannels()
+{
+    return ok({ { QStringLiteral("channels"), m_lez->channelsJson() } });
+}
+
+// ── collections + preserve ──────────────────────────────────────────────────
+
+QString ArchivePlugin::getCollections(const QString& channelId)
 {
     if (!channelId.isEmpty() && !m_lez->isFollowed(channelId.toLower()))
         return fail(QStringLiteral("not_followed"));
     return ok({ { QStringLiteral("collections"), m_lez->collectionsJson(channelId) } });
 }
 
-// ── preserve ────────────────────────────────────────────────────────────────
-
-QString ArchivePlugin::mirrorCollection(QString collectionId)
+QString ArchivePlugin::mirrorCollection(const QString& collectionId)
 {
     const QString cid = m_lez->collectionCid(collectionId);
     if (cid.isEmpty())
         return fail(QStringLiteral("unknown_collection"));
-    // one in-flight storage op per cid — a second mirror, or an unmirror racing a
-    // mirror, would corrupt the cid→collection ownership and the end state
     if (m_cidToCollection.contains(cid))
         return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
@@ -238,7 +216,7 @@ QString ArchivePlugin::mirrorCollection(QString collectionId)
                 { QStringLiteral("mode"), m_lez->preserveMode() } });
 }
 
-QString ArchivePlugin::unmirrorCollection(QString collectionId)
+QString ArchivePlugin::unmirrorCollection(const QString& collectionId)
 {
     const QString cid = m_lez->collectionCid(collectionId);
     if (cid.isEmpty())
@@ -252,7 +230,7 @@ QString ArchivePlugin::unmirrorCollection(QString collectionId)
     return ok({ { QStringLiteral("collectionId"), collectionId } });
 }
 
-QString ArchivePlugin::getMirrorStatus(QString collectionId)
+QString ArchivePlugin::getMirrorStatus(const QString& collectionId)
 {
     const QString state = m_lez->collectionState(collectionId);
     if (state.isEmpty())
@@ -262,7 +240,7 @@ QString ArchivePlugin::getMirrorStatus(QString collectionId)
                 { QStringLiteral("storageState"), m_storage->storageState() } });
 }
 
-// ── share cards (SPEC §12) ──────────────────────────────────────────────────
+// ── share cards ─────────────────────────────────────────────────────────────
 
 QString ArchivePlugin::cardsDir()
 {
@@ -270,10 +248,8 @@ QString ArchivePlugin::cardsDir()
            + QStringLiteral("/ia-archive");
 }
 
-QString ArchivePlugin::getShareData(QString scope)
+QString ArchivePlugin::getShareData(const QString& scope)
 {
-    // thumbnails resolve only against the active gateway's storage endpoint —
-    // chain-inscribed URL strings never reach Image.source (Senty P6 HIGH)
     const auto gws = m_lez->gateways();
     const QString thumbBase =
         gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).storageUrl;
@@ -282,18 +258,18 @@ QString ArchivePlugin::getShareData(QString scope)
     return QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact));
 }
 
-QString ArchivePlugin::saveShareCard(QString pngBase64, QString name)
+QString ArchivePlugin::saveShareCard(const QString& pngBase64, const QString& name)
 {
     const QJsonObject r = ShareHelper::savePngBase64(cardsDir(), name, pngBase64);
     if (!r.value(QStringLiteral("ok")).toBool())
-        setLastError(r.value(QStringLiteral("error")).toString());
+        m_lastError = r.value(QStringLiteral("error")).toString();
     return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
 }
 
-QString ArchivePlugin::revealCard(QString path)
+QString ArchivePlugin::revealCard(const QString& path)
 {
-    // scoped strictly to the app's own card directory — an arbitrary path must not
-    // open arbitrary folders (or UNC shares); canonicalization defeats symlink games
+    // logos_host has no QGuiApplication → QDesktopServices is unavailable; open the
+    // folder (never the file) with the platform opener. Scoped to the cards dir.
     const QFileInfo fi(path);
     const QString canonical = fi.canonicalFilePath();
     const QString dirCanonical = QFileInfo(cardsDir()).canonicalFilePath();
@@ -301,8 +277,14 @@ QString ArchivePlugin::revealCard(QString path)
         || !canonical.startsWith(dirCanonical + QLatin1Char('/'))
         || fi.suffix() != QLatin1String("png"))
         return fail(QStringLiteral("no_such_card"));
-    // open the folder, never the file — a folder open can't execute anything
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(dirCanonical)))
+#if defined(Q_OS_DARWIN)
+    const QString opener = QStringLiteral("open");
+#elif defined(Q_OS_WIN)
+    const QString opener = QStringLiteral("explorer");
+#else
+    const QString opener = QStringLiteral("xdg-open");
+#endif
+    if (!QProcess::startDetached(opener, { dirCanonical }))
         return fail(QStringLiteral("cannot_open_folder"));
     return ok({ { QStringLiteral("path"), canonical } });
 }

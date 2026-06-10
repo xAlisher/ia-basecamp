@@ -23,68 +23,83 @@ Item {
     readonly property color errorRed:      "#FB3748"
     readonly property color borderColor:   "#383838"
 
-    // ── Backend bridge (QRO replica) ─────────────────────────────────────────
-    readonly property var backend: logos.module("archive")
-    readonly property string gatewayState: backend ? backend.gatewayState : "offline"
-    readonly property int    syncLag:      backend ? backend.syncLagBlocks : 0
-    readonly property string storageState: backend ? backend.storageState : "offline"
-    readonly property string preserveMode: backend ? backend.preserveMode : "delegate"
-    readonly property string lastError:    backend ? backend.lastError : ""
-
+    // ── Backend bridge: logos.callModule("archive", …) + guarded polling ─────
+    // (stash_ui/radio-main pattern — the core module runs in logos_host; the QML
+    // bridge in the main process owns the capability tokens. callModule blocks the
+    // JS thread, so every Timer-driven poll carries a reentrancy guard.)
+    property string gatewayState: "offline"
+    property int    syncLag: 0
+    property string storageState: "offline"
+    property string preserveMode: "local"
     property var channels: []
     property var collections: []
     property var summary: ({})
     property bool settingsOpen: false
 
-    readonly property string channelsRaw:    backend ? backend.channelsJson : "[]"
-    readonly property string collectionsRaw: backend ? backend.collectionsJson : "[]"
-    readonly property string summaryRaw:     backend ? backend.summaryJson : "{}"
-    onChannelsRawChanged:    channels = safeParse(channelsRaw, [])
-    onCollectionsRawChanged: collections = safeParse(collectionsRaw, [])
-    onSummaryRawChanged:     summary = safeParse(summaryRaw, {})
-
-    // Edge-triggered logging — the backend may re-emit unchanged values (health polls,
-    // repeated failovers); the activity log records transitions, the pills show state.
-    property string _loggedGatewayState: ""
-    property string _loggedError: ""
-    onLastErrorChanged: {
-        if (lastError && lastError !== _loggedError) {
-            _loggedError = lastError
-            logEvent("error", lastError)
-        }
-    }
-    onGatewayStateChanged: {
-        if (gatewayState !== _loggedGatewayState) {
-            _loggedGatewayState = gatewayState
-            logEvent("gateway", "Gateway " + gatewayState)   // lag lives in the pill (own binding)
-        }
-    }
-
     function safeParse(raw, fallback) {
         try {
             var v = JSON.parse(raw)
-            if (typeof v === "string") v = JSON.parse(v)   // defensive vs double-encoding
+            if (typeof v === "string") v = JSON.parse(v)   // callModule double-encodes
             return v === null ? fallback : v
         } catch (e) { return fallback }
     }
 
-    // SLOT call → parsed {ok,...} result into cb; failures land in the activity log
+    // sync call → parsed {ok,...}; failures land in the activity log
     function call(method, args, cb) {
-        if (!backend) { logEvent("error", "No backend — module not loaded"); return }
-        if (typeof backend[method] !== "function") {
-            logEvent("error", method + ": not available on this backend")
-            return
-        }
+        var r = null
         try {
-            var pending = backend[method].apply(backend, args)
-            logos.watch(pending, function(ret) {
-                var r = safeParse(ret, null)
-                if (r && r.ok === false) logEvent("error", method + ": " + r.error)
-                if (cb) cb(r)
-            }, function(_e) { logEvent("error", method + ": call failed") })
+            r = safeParse(logos.callModule("archive", method, args || []), null)
         } catch (e) {
             logEvent("error", method + ": " + e)
         }
+        if (r === null) logEvent("error", method + ": no response from archive module")
+        else if (r.ok === false) logEvent("error", method + ": " + r.error)
+        if (cb) cb(r)
+        if (r && r.ok) Qt.callLater(root.poll)   // snappy refresh after any action
+        return r
+    }
+
+    // Edge-triggered logging — polls re-deliver unchanged values; the activity log
+    // records transitions, the pills show state.
+    property string _loggedGatewayState: ""
+    property string _loggedError: ""
+
+    property bool pollBusy: false
+    function poll() {
+        if (root.pollBusy) return   // re-entrant Timer fire from inside callModule — skip
+        root.pollBusy = true
+        var s = null
+        try {
+            s = safeParse(logos.callModule("archive", "getStatus", []), null)
+        } catch (e) { s = null }
+        if (s && s.ok) {
+            root.gatewayState = s.gatewayState || "offline"
+            root.syncLag = s.syncLagBlocks || 0
+            root.storageState = s.storageState || "offline"
+            root.preserveMode = s.preserveMode || "local"
+            root.summary = s.summary || {}
+            if (s.lastError && s.lastError !== root._loggedError) {
+                root._loggedError = s.lastError
+                logEvent("error", s.lastError)
+            }
+            if (root.gatewayState !== root._loggedGatewayState) {
+                root._loggedGatewayState = root.gatewayState
+                logEvent("gateway", "Gateway " + root.gatewayState)
+            }
+            var ch = safeParse(logos.callModule("archive", "getChannels", []), null)
+            if (ch && ch.ok) root.channels = ch.channels || []
+            var co = safeParse(logos.callModule("archive", "getCollections", [""]), null)
+            if (co && co.ok) root.collections = co.collections || []
+        } else {
+            root.gatewayState = "offline"
+            root.storageState = "offline"
+        }
+        root.pollBusy = false
+    }
+
+    Timer {
+        interval: 2500; repeat: true; running: true; triggeredOnStart: true
+        onTriggered: root.poll()
     }
 
     function gb(bytes) { return (bytes / 1e9).toFixed(bytes > 0 && bytes < 1e8 ? 2 : 1) }
@@ -328,7 +343,7 @@ Item {
             Layout.fillWidth: true
             spacing: 8
             Label {
-                text: "Archive"
+                text: "IA → λ"
                 color: root.textPrimary
                 font.pixelSize: 20; font.bold: true
             }

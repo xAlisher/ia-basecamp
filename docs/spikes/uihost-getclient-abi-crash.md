@@ -55,3 +55,27 @@ QML is a view-only plugin using the main-process bridge (`logos.callModule`). Th
 affects radio's ui-qml-backend forward path — same landmine. Worth an upstream issue:
 either ship `getClient` support guarantees for ui-host LogosAPI objects, or make liblogos
 ABI-stable across host types.
+
+## Final root cause (supersedes "ui-host vs logos_host" framing)
+
+The host type was a red herring — the crash reproduces in the main Basecamp process too.
+The actual line is the **cpp-sdk era statically linked into the plugin**:
+
+- The AppImage's `liblogos_core.so` exports `LogosAPI::getClient(QString)` — the
+  **April-era ABI** (no `LogosTransportConfig`).
+- cpp-sdk introduced `LogosTransportConfig` + `runOnOwnerThread` between **f7c855b
+  (Apr 21, clean)** and **25c88f4 (May 4, present)**. Any plugin built with a May+ SDK
+  carries a `LogosAPI` member layout the host object doesn't have → garbage string-length
+  read → `bad_alloc`.
+- Stash "works" because its **installed binary** is April-era. Its repo's current
+  `flake.lock` (builder b841fdc / sdk 40e7631) would produce a broken build today —
+  the lock drifted past the binary.
+- Verified by symbols: working stash .so and the AppImage export 1-arg `getClient` only;
+  every crashing build of ours carried the 2-arg + `runOnOwnerThread` variants.
+
+**Fix:** pin `logos-module-builder` to `29cecd2` (Apr 24), whose internal sdk is
+`f7c855b`. Confirmed by `nm` on the rebuilt .so: host-identical symbol shape.
+
+**Rule for any module on this AppImage:** `nm -DC <AppImage>/usr/lib/liblogos_core.so |
+grep getClient` tells you the host's SDK era; your plugin's `nm` must match it. Lock
+files drift — binaries are the ground truth.

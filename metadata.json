@@ -1,15 +1,12 @@
 {
   "name": "archive",
-  "version": "0.1.0",
-  "type": "ui_qml",
+  "version": "0.2.0",
+  "type": "core",
   "category": "storage",
   "description": "Follow curated archive channels (Logos Execution Zone) and help preserve their collections to Storage. Pure HTTP client \u2014 no platform deps, builds on Mac/Win/Linux.",
   "main": "archive_plugin",
-  "view": "qml/Main.qml",
   "icon": "icons/archive.png",
-  "dependencies": [
-    "storage_module"
-  ],
+  "dependencies": [],
   "nix": {
     "packages": {
       "build": [],
@@ -17,22 +14,10 @@
     },
     "external_libraries": [],
     "cmake": {
-      "find_packages": [
-        "Qt6 REQUIRED COMPONENTS Core Network Gui"
-      ],
-      "extra_sources": [
-        "src/lez_client.cpp",
-        "src/storage_client.cpp",
-        "src/share_helper.cpp"
-      ],
-      "extra_include_dirs": [
-        "src"
-      ],
-      "extra_link_libraries": [
-        "Qt6::Core",
-        "Qt6::Network",
-        "Qt6::Gui"
-      ]
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
     }
   }
 }
