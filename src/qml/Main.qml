@@ -167,6 +167,60 @@ Item {
 
     Rectangle { anchors.fill: parent; color: root.bgPrimary }
 
+    // ── Styled controls (radio's dark components — default QtQuick chrome
+    //    clashes with the dark theme) ─────────────────────────────────────────
+    component DarkButton: Button {
+        id: db
+        contentItem: Text {
+            text: db.text; font.pixelSize: 13
+            color: !db.enabled ? root.textMuted : root.textPrimary
+            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 6; implicitHeight: 32; implicitWidth: 72
+            color: db.down ? root.bgActive : db.hovered ? "#3a3a3a" : root.bgSecondary
+            border.color: root.borderColor; border.width: 1
+        }
+    }
+    component AccentButton: Button {
+        id: ab
+        contentItem: Text {
+            text: ab.text; font.pixelSize: 13; font.bold: true
+            color: ab.enabled ? "#FFFFFF" : root.textMuted
+            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 6; implicitHeight: 32; implicitWidth: 84
+            color: !ab.enabled ? root.bgSecondary : ab.down ? "#CC4000" : root.accentOrange
+        }
+    }
+    component DarkField: TextField {
+        property color fieldBg: root.bgSecondary
+        color: root.textPrimary
+        placeholderTextColor: root.textMuted
+        selectionColor: root.accentOrange
+        background: Rectangle {
+            radius: 6; implicitHeight: 32
+            color: parent.fieldBg
+            border.color: parent && parent.activeFocus ? root.accentOrange : root.borderColor
+            border.width: 1
+        }
+    }
+    component DarkRadio: RadioButton {
+        id: dr
+        spacing: 8
+        font.pixelSize: 12
+        palette.windowText: root.textSecondary
+        indicator: Rectangle {
+            implicitWidth: 18; implicitHeight: 18; radius: 9
+            x: dr.leftPadding; y: dr.topPadding + (dr.availableHeight - height) / 2
+            color: "transparent"; border.width: 2
+            border.color: dr.checked ? root.accentOrange : root.textMuted
+            Rectangle { anchors.centerIn: parent; width: 8; height: 8; radius: 4
+                color: root.accentOrange; visible: dr.checked }
+        }
+    }
+
     // ── ShareCard — rendered offscreen at X/Twitter ratio, no PII ────────────
     Rectangle {
         id: shareCard
@@ -325,45 +379,35 @@ Item {
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
                 spacing: 8
                 Label { text: "Preserve mode"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
-                RadioButton {
+                DarkRadio {
                     text: "Delegate — the gateway pins for you (zero-infra)"
                     checked: root.preserveMode === "delegate"
                     onClicked: root.call("choosePreserveMode", ["delegate"],
                                          function(r) { if (r && r.ok) root.logEvent("config", "Mode → delegate") })
-                    contentItem: Label {
-                        text: parent.text; color: root.textSecondary; font.pixelSize: 12
-                        leftPadding: parent.indicator.width + 6; verticalAlignment: Text.AlignVCenter
-                    }
                 }
-                RadioButton {
+                DarkRadio {
                     text: "Local — replicate to your own Storage node"
                     checked: root.preserveMode === "local"
                     onClicked: root.call("choosePreserveMode", ["local"],
                                          function(r) { if (r && r.ok) root.logEvent("config", "Mode → local") })
-                    contentItem: Label {
-                        text: parent.text; color: root.textSecondary; font.pixelSize: 12
-                        leftPadding: parent.indicator.width + 6; verticalAlignment: Text.AlignVCenter
-                    }
                 }
                 Label { text: "Gateway"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    TextField {
+                    DarkField {
                         id: nodeUrlField
                         Layout.fillWidth: true
+                        fieldBg: root.bgPrimary
                         placeholderText: "node URL — http://gateway:8080"
-                        color: root.textPrimary; placeholderTextColor: root.textMuted
-                        background: Rectangle { color: root.bgPrimary; radius: 4; border.color: root.borderColor }
                     }
-                    TextField {
+                    DarkField {
                         id: storageUrlField
                         Layout.fillWidth: true
+                        fieldBg: root.bgPrimary
                         placeholderText: "storage URL — http://gateway:5001"
-                        color: root.textPrimary; placeholderTextColor: root.textMuted
-                        background: Rectangle { color: root.bgPrimary; radius: 4; border.color: root.borderColor }
                     }
-                    Button {
+                    DarkButton {
                         text: "Apply"
                         enabled: nodeUrlField.text.length > 0
                         onClicked: root.call("setGateways",
@@ -394,7 +438,7 @@ Item {
                           + " · " + (root.summary.collections || 0) + " collections"
                     color: root.textSecondary; font.pixelSize: 11
                 }
-                Button {
+                AccentButton {
                     text: "Share"
                     enabled: (root.summary.mirrored || 0) > 0
                     onClicked: root.shareScope("me")
@@ -438,15 +482,13 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    TextField {
+                    DarkField {
                         id: followField
                         Layout.fillWidth: true
                         placeholderText: "channel id, id@startSlot, or explorer URL"
-                        color: root.textPrimary; placeholderTextColor: root.textMuted
-                        background: Rectangle { color: root.bgSecondary; radius: 4; border.color: root.borderColor }
                         onAccepted: followBtn.clicked()
                     }
-                    Button {
+                    AccentButton {
                         id: followBtn
                         text: "Follow"
                         enabled: followField.text.length > 0
@@ -578,20 +620,22 @@ Item {
                                         color: root.mirrorColor(modelData.state); font.pixelSize: 10
                                     }
                                 }
-                                Button {
-                                    text: modelData.state === "mirrored" ? "Unpreserve" : "Preserve"
+                                AccentButton {
+                                    visible: modelData.state !== "mirrored"
+                                    text: "Preserve"
                                     enabled: modelData.state !== "mirroring" && !!modelData.id
-                                    onClicked: {
-                                        if (modelData.state === "mirrored")
-                                            root.call("unmirrorCollection", [modelData.id], function(r) {
-                                                if (r && r.ok) root.logEvent("mirror", "Unpreserving " + modelData.title)
-                                            })
-                                        else
-                                            root.call("mirrorCollection", [modelData.id], function(r) {
-                                                if (r && r.ok) root.logEvent("mirror",
-                                                    "Preserving " + modelData.title + " (" + r.mode + ")")
-                                            })
-                                    }
+                                    onClicked: root.call("mirrorCollection", [modelData.id], function(r) {
+                                        if (r && r.ok) root.logEvent("mirror",
+                                            "Preserving " + modelData.title + " (" + r.mode + ")")
+                                    })
+                                }
+                                DarkButton {
+                                    visible: modelData.state === "mirrored"
+                                    text: "Unpreserve"
+                                    enabled: !!modelData.id
+                                    onClicked: root.call("unmirrorCollection", [modelData.id], function(r) {
+                                        if (r && r.ok) root.logEvent("mirror", "Unpreserving " + modelData.title)
+                                    })
                                 }
                             }
                             RowLayout {
