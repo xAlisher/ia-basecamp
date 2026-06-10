@@ -444,11 +444,15 @@ Item {
         // ── Summary counter — the campaign hook ──────────────────────────────
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 46; radius: 8
+            implicitHeight: summaryRow.implicitHeight + 16   // content-sized — the 32px
+            radius: 8                                        // button overflowed a fixed 46
             color: root.bgSecondary; border.color: root.borderColor
             RowLayout {
-                anchors.fill: parent; anchors.margins: 12; spacing: 6
+                id: summaryRow
+                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
+                spacing: 10
                 Label {
+                    Layout.alignment: Qt.AlignVCenter
                     text: "You're preserving "
                           + (root.summary.mirrored || 0) + " collection"
                           + ((root.summary.mirrored || 0) === 1 ? "" : "s")
@@ -457,11 +461,13 @@ Item {
                 }
                 Item { Layout.fillWidth: true }
                 Label {
+                    Layout.alignment: Qt.AlignVCenter
                     text: "following " + (root.summary.following || 0)
                           + " · " + (root.summary.collections || 0) + " collections"
                     color: root.textSecondary; font.pixelSize: 11
                 }
                 AccentButton {
+                    Layout.alignment: Qt.AlignVCenter
                     text: "Share"
                     enabled: (root.summary.mirrored || 0) > 0
                     onClicked: root.shareScope("me")
