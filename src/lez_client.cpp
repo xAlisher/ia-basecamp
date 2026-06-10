@@ -292,6 +292,7 @@ void LezClient::scanNextPage(const QString& channelId, qint64 generation, int ga
         return;
     Q_ASSERT(m_channels.contains(channelId));
     Channel& ch = m_channels[channelId];
+    ch.lastLibSlot = libSlot;
     const qint64 from = ch.cursor > 0 ? ch.cursor + 1 : ch.startSlot;
     if (from > libSlot || pagesLeft <= 0) {
         ch.synced = (from > libSlot);
@@ -356,14 +357,19 @@ QJsonArray LezClient::channelsJson() const
 {
     QJsonArray arr;
     for (const Channel& ch : m_channels) {
-        arr.append(QJsonObject{
+        QJsonObject row{
             { QStringLiteral("channelId"), ch.channelId },
             { QStringLiteral("name"), ch.channelId.left(8) },
             { QStringLiteral("curator"), ch.curator },
             { QStringLiteral("collections"), ch.collections.size() },
             { QStringLiteral("lastInscription"), ch.lastInscription },
             { QStringLiteral("synced"), ch.synced },
-        });
+        };
+        if (!ch.synced && ch.lastLibSlot > ch.startSlot && ch.cursor >= ch.startSlot)
+            row.insert(QStringLiteral("progress"),
+                       qBound<int>(0, int(100.0 * double(ch.cursor - ch.startSlot)
+                                              / double(ch.lastLibSlot - ch.startSlot)), 100));
+        arr.append(row);
     }
     return arr;
 }

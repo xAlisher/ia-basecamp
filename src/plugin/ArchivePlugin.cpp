@@ -77,6 +77,20 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     });
     connect(m_storage, &StorageClient::repoStatResult, this,
             [this](qint64 usedBytes) { m_usedBytes = usedBytes; });
+    // a long history is many capped refreshes — chain them so "follow" syncs to lib
+    // without the user hammering refresh; stop while the gateway is down
+    connect(m_lez, &LezClient::scanFinished, this,
+            [this](const QString& channelId, bool reachedLib) {
+        if (reachedLib || !m_lez->isFollowed(channelId))
+            return;
+        if (m_lez->gatewayState() == QLatin1String("offline"))
+            return;   // the next health poll's refresh attempt picks it back up
+        QTimer::singleShot(1200, this, [this, channelId] {
+            if (m_lez->isFollowed(channelId)
+                && m_lez->gatewayState() != QLatin1String("offline"))
+                m_lez->refreshChannel(channelId);
+        });
+    });
 
     m_lez->loadState();
 
@@ -109,7 +123,11 @@ QString ArchivePlugin::getStatus()
         return fail(QStringLiteral("not_initialized"));
     QJsonObject summary = m_lez->summaryJson();
     summary.insert(QStringLiteral("usedBytes"), m_usedBytes);
+    const auto gws = m_lez->gateways();
+    const QString activeUrl =
+        gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).nodeUrl;
     return ok({
+        { QStringLiteral("activeGatewayUrl"), activeUrl },
         { QStringLiteral("gatewayState"), m_lez->gatewayState() },
         { QStringLiteral("syncLagBlocks"), m_lez->syncLagSlots() },
         { QStringLiteral("storageState"), m_storage->storageState() },

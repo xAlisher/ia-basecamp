@@ -31,6 +31,7 @@ Item {
     property int    syncLag: 0
     property string storageState: "offline"
     property string preserveMode: "local"
+    property string activeGatewayUrl: ""
     property var channels: []
     property var collections: []
     property var summary: ({})
@@ -44,14 +45,19 @@ Item {
         } catch (e) { return fallback }
     }
 
-    // sync call → parsed {ok,...}; failures land in the activity log
+    // sync call → parsed {ok,...}; failures land in the activity log.
+    // callModule pumps the event loop while waiting — pollBusy blocks the Timer from
+    // refreshing models mid-call (a model reset destroys delegates and their closures).
     function call(method, args, cb) {
+        var wasBusy = root.pollBusy
+        root.pollBusy = true
         var r = null
         try {
             r = safeParse(logos.callModule("archive", method, args || []), null)
         } catch (e) {
             logEvent("error", method + ": " + e)
         }
+        root.pollBusy = wasBusy
         if (r === null) logEvent("error", method + ": no response from archive module")
         else if (r.ok === false) logEvent("error", method + ": " + r.error)
         if (cb) cb(r)
@@ -77,6 +83,7 @@ Item {
             root.syncLag = s.syncLagBlocks || 0
             root.storageState = s.storageState || "offline"
             root.preserveMode = s.preserveMode || "local"
+            root.activeGatewayUrl = s.activeGatewayUrl || ""
             root.summary = s.summary || {}
             if (s.lastError && s.lastError !== root._loggedError) {
                 root._loggedError = s.lastError
@@ -118,6 +125,11 @@ Item {
         if (activityModel.count > 200) activityModel.remove(200, activityModel.count - 200)
     }
 
+    // ── Toast — immediate feedback for copy/share/preserve actions ───────────
+    property string toastText: ""
+    function toast(t) { toastText = t; toastTimer.restart() }
+    Timer { id: toastTimer; interval: 2200; onTriggered: root.toastText = "" }
+
     // ── Share cards (SPEC §12): getShareData → ShareCard render → grabToImage →
     //    Canvas toDataURL → saveShareCard(pngBase64) → revealCard ────────────────
     property var shareData: null
@@ -125,8 +137,15 @@ Item {
     function shareScope(scope) {
         if (shareBusy) return
         shareBusy = true
+        toast("Rendering card…")
         call("getShareData", [scope], function(r) {
-            if (!r || r.ok === false) { root.shareBusy = false; return }
+            if (!r || r.ok === false) {
+                root.shareBusy = false
+                root.toast(r && r.error === "nothing_preserved_yet"
+                           ? "Preserve something first — the card shows what you keep alive"
+                           : "Share failed: " + (r ? r.error : "no response"))
+                return
+            }
             root.shareData = r
             shareSettleTimer.restart()   // one tick for bindings to settle before the grab
         })
@@ -135,10 +154,11 @@ Item {
         id: shareSettleTimer
         interval: 120
         onTriggered: {
-            shareCard.grabToImage(function(result) {
+            var ok = shareCard.grabToImage(function(result) {
                 exportCanvas.exportUrl = result.url
                 exportCanvas.loadImage(result.url)
             }, Qt.size(1200, 675))
+            if (!ok) { root.shareBusy = false; root.toast("Share failed: card render rejected") }
         }
     }
     Canvas {
@@ -164,7 +184,10 @@ Item {
                 root.shareBusy = false
                 if (r && r.ok) {
                     root.logEvent("share", "Card saved — " + r.path)
+                    root.toast("Card saved — opening folder")
                     root.call("revealCard", [r.path], null)
+                } else {
+                    root.toast("Share failed: " + (r ? r.error : "save failed"))
                 }
             })
         }
@@ -372,15 +395,6 @@ Item {
                     Label { text: "Storage " + root.storageState; color: root.textSecondary; font.pixelSize: 11 }
                 }
             }
-            Rectangle {
-                implicitWidth: modeLbl.implicitWidth + 16; implicitHeight: 24; radius: 12
-                color: root.bgActive; border.color: root.borderColor
-                Label {
-                    id: modeLbl; anchors.centerIn: parent
-                    text: root.preserveMode === "local" ? "Local" : "Delegate"
-                    color: root.accentOrange; font.pixelSize: 11; font.bold: true
-                }
-            }
             ToolButton {
                 text: "⚙"
                 onClicked: root.settingsOpen = !root.settingsOpen
@@ -405,18 +419,6 @@ Item {
                 id: settingsCol
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
                 spacing: 8
-                Label { text: "Preserve mode"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
-                DarkRadio {
-                    text: "Local — replicate to your Logos Storage node"
-                    checked: root.preserveMode === "local"
-                    onClicked: root.call("choosePreserveMode", ["local"],
-                                         function(r) { if (r && r.ok) root.logEvent("config", "Mode → local") })
-                }
-                DarkRadio {
-                    text: "Delegate — a campaign gateway pins for you (coming with campaign gateways)"
-                    enabled: false
-                    checked: root.preserveMode === "delegate"
-                }
                 Label { text: "Gateway node"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -425,7 +427,7 @@ Item {
                         id: nodeUrlField
                         Layout.fillWidth: true
                         fieldBg: root.bgPrimary
-                        placeholderText: "node URL — http://gateway:8080"
+                        placeholderText: root.activeGatewayUrl || "node URL — http://gateway:8080"
                     }
                     DarkButton {
                         text: "Apply"
@@ -442,7 +444,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: 46; radius: 8
-            color: root.bgActive; border.color: root.borderColor
+            color: root.bgSecondary; border.color: root.borderColor
             RowLayout {
                 anchors.fill: parent; anchors.margins: 12; spacing: 6
                 Label {
@@ -551,7 +553,9 @@ Item {
                                 color: "transparent"; border.color: modelData.synced ? root.successGreen : root.warningYellow
                                 Label {
                                     id: syncLbl; anchors.centerIn: parent
-                                    text: modelData.synced ? "synced" : "syncing…"
+                                    text: modelData.synced ? "synced"
+                                          : "syncing " + (modelData.progress !== undefined
+                                                          ? modelData.progress + "%" : "…")
                                     color: modelData.synced ? root.successGreen : root.warningYellow
                                     font.pixelSize: 10
                                 }
@@ -559,18 +563,24 @@ Item {
                             ToolButton {
                                 text: "↻"
                                 enabled: !!modelData.channelId
-                                onClicked: root.call("refreshChannel", [modelData.channelId], function(r) {
-                                    if (r && r.ok) root.logEvent("refresh", "Refreshing " + root.shortId(modelData.channelId))
-                                })
+                                onClicked: {
+                                    var R = root, id = modelData.channelId
+                                    R.call("refreshChannel", [id], function(r) {
+                                        if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id))
+                                    })
+                                }
                                 contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
                                 background: Rectangle { color: "transparent" }
                             }
                             ToolButton {
                                 text: "✕"
                                 enabled: !!modelData.channelId
-                                onClicked: root.call("unfollowChannel", [modelData.channelId], function(r) {
-                                    if (r && r.ok) root.logEvent("follow", "Unfollowed " + root.shortId(modelData.channelId))
-                                })
+                                onClicked: {
+                                    var R = root, id = modelData.channelId
+                                    R.call("unfollowChannel", [id], function(r) {
+                                        if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id))
+                                    })
+                                }
                                 contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
                                 background: Rectangle { color: "transparent" }
                             }
@@ -644,18 +654,28 @@ Item {
                                     visible: modelData.state !== "mirrored"
                                     text: "Preserve"
                                     enabled: modelData.state !== "mirroring" && !!modelData.id
-                                    onClicked: root.call("mirrorCollection", [modelData.id], function(r) {
-                                        if (r && r.ok) root.logEvent("mirror",
-                                            "Preserving " + modelData.title + " (" + r.mode + ")")
-                                    })
+                                    onClicked: {
+                                        // capture before the call: the bridge pumps the event
+                                        // loop and the delegate (with its context) can die
+                                        var R = root, t = modelData.title
+                                        R.toast("Preserving " + t + "…")
+                                        R.call("mirrorCollection", [modelData.id], function(r) {
+                                            if (r && r.ok) R.logEvent("mirror", "Preserving " + t)
+                                            else R.toast("Preserve failed: " + (r ? r.error : "no response"))
+                                        })
+                                    }
                                 }
                                 DarkButton {
                                     visible: modelData.state === "mirrored"
                                     text: "Unpreserve"
                                     enabled: !!modelData.id
-                                    onClicked: root.call("unmirrorCollection", [modelData.id], function(r) {
-                                        if (r && r.ok) root.logEvent("mirror", "Unpreserving " + modelData.title)
-                                    })
+                                    onClicked: {
+                                        var R = root, t = modelData.title
+                                        R.call("unmirrorCollection", [modelData.id], function(r) {
+                                            if (r && r.ok) { R.logEvent("mirror", "Unpreserving " + t); R.toast("Unpreserved " + t) }
+                                            else R.toast("Unpreserve failed: " + (r ? r.error : "no response"))
+                                        })
+                                    }
                                 }
                             }
                             RowLayout {
@@ -678,6 +698,7 @@ Item {
                                     onClicked: {
                                         root.copyText(root.explorerUrl(modelData.txHash))
                                         root.logEvent("copy", "Provenance link copied — " + root.shortId(modelData.txHash))
+                                        root.toast("Explorer link copied")
                                     }
                                     contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 10 }
                                     background: Rectangle { color: "transparent" }
@@ -685,7 +706,7 @@ Item {
                                 ToolButton {
                                     text: "share"
                                     enabled: !!modelData.id
-                                    onClicked: root.shareScope(modelData.id)
+                                    onClicked: { var R = root; R.shareScope(modelData.id) }
                                     contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 10 }
                                     background: Rectangle { color: "transparent" }
                                 }
@@ -731,6 +752,21 @@ Item {
                     color: root.textMuted; font.pixelSize: 12
                 }
             }
+        }
+    }
+
+    // ── Toast overlay ────────────────────────────────────────────────────────
+    Rectangle {
+        visible: root.toastText !== ""
+        anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 18 }
+        width: Math.min(toastLbl.implicitWidth + 28, parent.width - 40); height: 34; radius: 17
+        color: "#E6262626"; border.color: root.borderColor
+        z: 1000
+        Label {
+            id: toastLbl; anchors.centerIn: parent
+            text: root.toastText; color: root.textPrimary; font.pixelSize: 12
+            elide: Text.ElideMiddle; width: Math.min(implicitWidth, parent.width - 24)
+            horizontalAlignment: Text.AlignHCenter
         }
     }
 }

@@ -47,6 +47,7 @@ public:
         qint64  lastInscription = 0;
         QString curator;
         bool    synced = false;    // cursor caught up to lib_slot at last refresh
+        qint64  lastLibSlot = 0;   // lib at the most recent scan — drives the progress %
         qint64  generation = 0;    // bumped on follow — stale async callbacks self-discard
         QVector<Collection> collections;
     };
