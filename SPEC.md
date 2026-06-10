@@ -76,6 +76,27 @@ gateways and fail over — keeps the zero-friction default without one machine b
 > (indexer stalled behind tip → recent inscriptions 404). The indexer is also **one channel per
 > instance** (`config.channel_id`), so the gateway runs one synced indexer per curated channel. See §10.
 
+### 4.1 P0 spike findings (2026-06-10) — confirmed read path
+
+The spike ([docs/spikes/p0-channel-read.md](docs/spikes/p0-channel-read.md)) resolved §10.3: the
+table above describes the LEZ **zone-state** indexer, which borsh-decodes inscriptions as zone
+blocks and therefore **cannot serve raw-JSON curated channels** (the kind zone-sequencer curators
+inscribe); its transactions also carry no `ChannelInscribe` ops to decode. There is **no
+channelId→account_id derivation** — upstream's own consumer reference (the
+`l2-sequencer-archival-demo` archiver) reads a channel by filtering `Op::ChannelInscribe`
+(opcode 17) on `channel_id` over **finalized L1 blocks**. `lez_client` therefore speaks the
+gateway node's Cryptarchia HTTP API, confirmed live against a synced node:
+
+| Need | Call |
+|------|------|
+| Health / finality / lag | `GET /cryptarchia/info` → `{lib_slot, slot, tip, mode}`; `syncLagBlocks = slot − lib_slot`, unreachable ⇒ `offline` |
+| Inscription history | `GET /cryptarchia/blocks?slot_from&slot_to` (paged) → `transactions[].mantle_tx.ops[]`, keep `opcode==17 && channel_id==followed`, slots ≤ `lib_slot` only |
+| New collections | poll `info` for `lib_slot` advance; scan the delta |
+
+Channel refs accept `channelId` or `channelId@startSlot` (history bootstrap hint). A gateway
+entry is `{nodeUrl, storageUrl}` (+ optional basic-auth). The federated-gateway, finalized-only,
+and sync-lag-surfacing requirements are unchanged.
+
 ## 5. Preserve path
 
 - **Delegate mode (default, zero-infra):** "Preserve" tells the trusted node to pin the collection's
