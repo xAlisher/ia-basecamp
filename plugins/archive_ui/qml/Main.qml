@@ -56,8 +56,9 @@ Item {
             r = safeParse(logos.callModule("archive", method, args || []), null)
         } catch (e) {
             logEvent("error", method + ": " + e)
+        } finally {
+            root.pollBusy = wasBusy
         }
-        root.pollBusy = wasBusy
         if (r === null) logEvent("error", method + ": no response from archive module")
         else if (r.ok === false) logEvent("error", method + ": " + r.error)
         if (cb) cb(r)
@@ -74,34 +75,43 @@ Item {
     function poll() {
         if (root.pollBusy) return   // re-entrant Timer fire from inside callModule — skip
         root.pollBusy = true
-        var s = null
+        // finally is load-bearing: one thrown callModule used to leave pollBusy stuck
+        // true forever — pills/stats froze at defaults until restart
         try {
-            s = safeParse(logos.callModule("archive", "getStatus", []), null)
-        } catch (e) { s = null }
-        if (s && s.ok) {
-            root.gatewayState = s.gatewayState || "offline"
-            root.syncLag = s.syncLagBlocks || 0
-            root.storageState = s.storageState || "offline"
-            root.preserveMode = s.preserveMode || "local"
-            root.activeGatewayUrl = s.activeGatewayUrl || ""
-            root.summary = s.summary || {}
-            if (s.lastError && s.lastError !== root._loggedError) {
-                root._loggedError = s.lastError
-                logEvent("error", s.lastError)
+            var s = null
+            try {
+                s = safeParse(logos.callModule("archive", "getStatus", []), null)
+            } catch (e) { s = null }
+            if (s && s.ok) {
+                root.gatewayState = s.gatewayState || "offline"
+                root.syncLag = s.syncLagBlocks || 0
+                root.storageState = s.storageState || "offline"
+                root.preserveMode = s.preserveMode || "local"
+                root.activeGatewayUrl = s.activeGatewayUrl || ""
+                root.summary = s.summary || {}
+                if (s.lastError && s.lastError !== root._loggedError) {
+                    root._loggedError = s.lastError
+                    logEvent("error", s.lastError)
+                }
+                if (root.gatewayState !== root._loggedGatewayState) {
+                    root._loggedGatewayState = root.gatewayState
+                    logEvent("gateway", "Gateway " + root.gatewayState)
+                }
+                try {
+                    var ch = safeParse(logos.callModule("archive", "getChannels", []), null)
+                    if (ch && ch.ok) root.channels = ch.channels || []
+                } catch (e1) {}
+                try {
+                    var co = safeParse(logos.callModule("archive", "getCollections", [""]), null)
+                    if (co && co.ok) root.collections = co.collections || []
+                } catch (e2) {}
+            } else {
+                root.gatewayState = "offline"
+                root.storageState = "offline"
             }
-            if (root.gatewayState !== root._loggedGatewayState) {
-                root._loggedGatewayState = root.gatewayState
-                logEvent("gateway", "Gateway " + root.gatewayState)
-            }
-            var ch = safeParse(logos.callModule("archive", "getChannels", []), null)
-            if (ch && ch.ok) root.channels = ch.channels || []
-            var co = safeParse(logos.callModule("archive", "getCollections", [""]), null)
-            if (co && co.ok) root.collections = co.collections || []
-        } else {
-            root.gatewayState = "offline"
-            root.storageState = "offline"
+        } finally {
+            root.pollBusy = false
         }
-        root.pollBusy = false
     }
 
     Timer {
@@ -112,7 +122,7 @@ Item {
     function gb(bytes) { return (bytes / 1e9).toFixed(bytes > 0 && bytes < 1e8 ? 2 : 1) }
     function shortId(s) { return s ? s.substring(0, 8) + "…" : "" }
     function explorerUrl(tx) {
-        return "https://testnet.blockchain.logos.co/web/explorer/transactions/" + tx
+        return "https://logosblocks.noders.services/txs/" + tx
     }
     function copyText(t) { clipHelper.text = t; clipHelper.selectAll(); clipHelper.copy(); clipHelper.text = "" }
     TextEdit { id: clipHelper; visible: false }

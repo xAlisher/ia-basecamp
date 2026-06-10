@@ -16,23 +16,30 @@ QString errorOf(const LogosResult& r)
     return e.isEmpty() ? QStringLiteral("storage_error") : e;
 }
 
-// LogosResult values arrive as strings whose shape isn't pinned by the API docs —
-// decode defensively (plain number, bool, or a JSON object with a used-bytes field).
+// LogosResult.value is a QVariant whose shape isn't pinned by the API docs —
+// decode type-aware: numeric variant, map with a used/size key, or JSON string.
 qint64 usedBytesFrom(const LogosResult& r)
 {
-    QString v;
-    try {
-        v = r.getValue<QString>();
-    } catch (...) {
-        return -1;
-    }
+    const QVariant& v = r.value;
     bool numOk = false;
-    const qint64 n = v.toLongLong(&numOk);
+    const qint64 direct = v.toLongLong(&numOk);
     if (numOk)
-        return n;
-    const QJsonObject o = QJsonDocument::fromJson(v.toUtf8()).object();
+        return direct;
+    if (v.canConvert<QVariantMap>()) {
+        const QVariantMap m = v.toMap();
+        for (auto it = m.constBegin(); it != m.constEnd(); ++it) {
+            const QString k = it.key().toLower();
+            if (k.contains(QLatin1String("used")) || k.contains(QLatin1String("size"))) {
+                const qint64 n = it.value().toLongLong(&numOk);
+                if (numOk)
+                    return n;
+            }
+        }
+    }
+    const QJsonObject o = QJsonDocument::fromJson(v.toString().toUtf8()).object();
     for (auto it = o.constBegin(); it != o.constEnd(); ++it) {
-        if (it.key().contains(QLatin1String("used"), Qt::CaseInsensitive)
+        const QString k = it.key().toLower();
+        if ((k.contains(QLatin1String("used")) || k.contains(QLatin1String("size")))
             && it.value().isDouble())
             return static_cast<qint64>(it.value().toDouble());
     }
@@ -153,9 +160,8 @@ void LogosStorageTransport::exists(const QString& cid, std::function<void(bool, 
 void LogosStorageTransport::space(std::function<void(bool, qint64)> cb)
 {
     const LogosResult r = m_storage->space();
-    QString raw;
-    try { raw = r.getValue<QString>(); } catch (...) {}
-    qInfo() << "LogosStorageTransport: space() success=" << r.success << "value=" << raw;
+    qInfo() << "LogosStorageTransport: space() success=" << r.success
+            << "type=" << r.value.typeName() << "value=" << r.value;
     const qint64 bytes = r.success ? usedBytesFrom(r) : -1;
     cb(r.success && bytes >= 0, bytes < 0 ? 0 : bytes);
 }
