@@ -75,3 +75,20 @@ also produced the CID used by the live test.
 **Win** · Senty caught the cid→collection single-slot ownership races (two collections sharing
 a cid; unmirror racing a mirror) — the same async-ownership class as P1's finding. The
 storage_busy one-op-per-cid guard is simpler than any bookkeeping that tries to allow the race.
+
+## 2026-06-10 — P3 (issue #5)
+
+**Win** · UI verified without a single GUI automation step: load smoke (zero QML errors in the
+harness log) + Alisher's screenshot confirming live pills — Gateway "ready" proved the whole
+chain (QML binding → QRO replica → backend health poll → sneg node) in one image.
+
+**Fail** · first activity-log design logged raw PROP-change signals · re-emits of unchanged
+state (failover emits unconditionally by design since P1) would have flooded the log with
+identical lines, and the gateway line read a sibling binding (syncLag) that can update after
+the state. Root cause: treating notify signals as events; they're state sync. Activity logs
+must be edge-triggered on tracked previous values, and a log line should only read values
+delivered in its own change notification.
+
+**Win** · delivery-demo (logos-co/logos-delivery-demo) is the canonical QML reference for the
+QRO-backend shape: logos.module() + PROPs as live bindings + logos.watch(slot(), cb). Radio's
+main branch uses the other path (logos.callModule IPC bridge) — don't mix the two patterns.
