@@ -124,3 +124,15 @@ Root cause: edited the familiar-looking config instead of checking the index fir
 **Win** · share path split into a pure helper (`share_helper`) made every security property
 unit-testable in milliseconds: traversal kills, PNG validation, size caps, thumbnail
 allowlist — no plugin/QRO scaffolding needed.
+
+## 2026-06-10 — P5 (issue #7)
+
+**Win** · did P6 before P5 (swapped issue order) so the final LGX ships with share cards —
+packaging last avoids cutting artifacts twice. Noted on both issues.
+
+**Win** · the catalog's `scripts/add-module.sh` generated the submodule + release workflow in
+one command; ia-basecamp is the catalog's first three-variant module (pure QtNetwork made the
+multi-arch claim a config default instead of a porting project).
+
+**Note** · arm64/darwin artifacts can't be built or load-tested on this machine (no binfmt, no
+darwin builder) — that's CI's job post-merge. Claimed exactly that, no more.
