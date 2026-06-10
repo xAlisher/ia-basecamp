@@ -120,7 +120,9 @@ private:
     QNetworkAccessManager* m_net = nullptr;
     QList<Gateway> m_gateways;
     int m_active = 0;
-    QString m_preserveMode = QStringLiteral("delegate");
+    // "local" is the only live mode — preserve goes to Logos Storage via the platform
+    // storage_module; "delegate" returns when campaign gateways exist
+    QString m_preserveMode = QStringLiteral("local");
 
     QString m_gatewayState = QStringLiteral("offline");
     qint64 m_syncLag = 0;

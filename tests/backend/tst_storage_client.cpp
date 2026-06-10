@@ -1,197 +1,195 @@
 #include <QSignalSpy>
 #include <QtTest>
 
-#include "mock_storage.h"
 #include "storage_client.h"
 
-// P2 backend tests per SPEC §13: deterministic, mock Storage endpoint, no network.
+// P2v2 backend tests per SPEC §13: preserve goes to Logos Storage via storage_module;
+// the typed SDK sits behind StorageTransport, so tests run headless with a mock that
+// records calls and fires deterministic callbacks.
+
+class MockTransport : public StorageTransport {
+public:
+    QStringList calls;
+    bool nodeUp = true;
+    bool fetchOk = true;
+    QString fetchError = QStringLiteral("fetch_failed");
+    bool removeOk = true;
+    QString removeError = QStringLiteral("remove_failed");
+    QSet<QString> held;
+    qint64 usedBytes = 0;
+    bool deferInit = false;          // hold the init callback for manual release
+    BoolCb pendingInitCb;
+
+    void initAndStart(const QString& dataDir, BoolCb cb) override
+    {
+        calls << "initAndStart:" + dataDir;
+        if (deferInit) { pendingInitCb = cb; return; }
+        cb(nodeUp, nodeUp ? QString() : QStringLiteral("storage_start_failed"));
+    }
+    void ping(BoolCb cb) override
+    {
+        calls << "ping";
+        cb(nodeUp, nodeUp ? QString() : QStringLiteral("storage_unreachable"));
+    }
+    void fetch(const QString& cid, BoolCb cb) override
+    {
+        calls << "fetch:" + cid;
+        if (fetchOk) held.insert(cid);
+        cb(fetchOk, fetchOk ? QString() : fetchError);
+    }
+    void removeCid(const QString& cid, BoolCb cb) override
+    {
+        calls << "remove:" + cid;
+        if (removeOk) held.remove(cid);
+        cb(removeOk, removeOk ? QString() : removeError);
+    }
+    void exists(const QString& cid, std::function<void(bool, bool)> cb) override
+    {
+        calls << "exists:" + cid;
+        cb(true, held.contains(cid));
+    }
+    void space(std::function<void(bool, qint64)> cb) override
+    {
+        calls << "space";
+        cb(true, usedBytes);
+    }
+};
 
 class TstStorageClient : public QObject {
     Q_OBJECT
 
 private:
-    MockStorage* m_storage = nullptr;
-
-    StorageClient* makeClient()
-    {
-        auto* c = new StorageClient(this);
-        c->setEndpoint(m_storage->baseUrl());
-        return c;
-    }
+    MockTransport m_transport;
 
 private slots:
-    void init()
-    {
-        m_storage = new MockStorage(this);
-        QVERIFY(m_storage->start());
-    }
+    void init() { m_transport = MockTransport(); }
 
-    void cleanup()
+    void initStorage_bringsNodeUp()
     {
-        delete m_storage;
-        m_storage = nullptr;
-    }
-
-    void resolveEndpoint_modes()
-    {
-        QCOMPARE(StorageClient::resolveEndpoint("delegate", "http://gw:5001", "http://local:5001"),
-                 QStringLiteral("http://gw:5001"));
-        QCOMPARE(StorageClient::resolveEndpoint("local", "http://gw:5001", "http://local:5001"),
-                 QStringLiteral("http://local:5001"));
-    }
-
-    void health_readyAndOffline()
-    {
-        StorageClient* c = makeClient();
-        QSignalSpy spy(c, &StorageClient::healthChanged);
-        c->pollHealth();
-        QVERIFY(spy.wait(3000));
+        StorageClient c(&m_transport);
+        QSignalSpy spy(&c, &StorageClient::healthChanged);
+        c.initStorage(QStringLiteral("/tmp/x"));
+        QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+        QVERIFY(m_transport.calls.first().startsWith("initAndStart:/tmp/x"));
+    }
 
-        m_storage->refuse = true;
-        c->pollHealth();
-        QVERIFY(spy.wait(3000));
+    void initStorage_failureIsOffline()
+    {
+        m_transport.nodeUp = false;
+        StorageClient c(&m_transport);
+        QSignalSpy spy(&c, &StorageClient::healthChanged);
+        c.initStorage(QStringLiteral("/tmp/x"));
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("offline"));
     }
 
-    void pin_succeedsWithProgress()
+    void initStorage_reentrancyGuarded()
     {
-        m_storage->progressSteps = 3;
-        StorageClient* c = makeClient();
-        QSignalSpy progress(c, &StorageClient::pinProgress);
-        QSignalSpy done(c, &StorageClient::pinFinished);
-
-        c->pin(QStringLiteral("cid-1"));
-        QVERIFY(done.wait(3000));
-        QCOMPARE(done.last().at(0).toString(), QStringLiteral("cid-1"));
-        QCOMPARE(done.last().at(1).toBool(), true);
-        QVERIFY(m_storage->pinned.contains("cid-1"));
-        // all progress lines observed (readyRead and/or final buffer)
-        QVERIFY(progress.count() >= 1 || m_storage->progressSteps == 0);
+        m_transport.deferInit = true;
+        StorageClient c(&m_transport);
+        c.initStorage(QStringLiteral("/tmp/x"));
+        c.initStorage(QStringLiteral("/tmp/x"));     // ignored while in flight
+        c.pollHealth();                              // also ignored while in flight
+        QCOMPARE(m_transport.calls.size(), 1);
+        QSignalSpy spy(&c, &StorageClient::healthChanged);
+        m_transport.pendingInitCb(true, QString());  // release
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
     }
 
-    void pin_fragmentedStream()
+    void health_pingBothWays()
     {
-        // mid-JSON-line fragmentation across readyRead events: every progress line
-        // must be seen exactly once and completion must still be detected
-        m_storage->progressSteps = 4;
-        m_storage->fragmentStream = true;
-        StorageClient* c = makeClient();
-        QSignalSpy progress(c, &StorageClient::pinProgress);
-        QSignalSpy done(c, &StorageClient::pinFinished);
+        StorageClient c(&m_transport);
+        QSignalSpy spy(&c, &StorageClient::healthChanged);
+        c.pollHealth();
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
+        m_transport.nodeUp = false;
+        c.pollHealth();
+        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("offline"));
+    }
 
-        c->pin(QStringLiteral("cid-frag"));
-        QVERIFY(done.wait(5000));
+    void pin_success()
+    {
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::pinFinished);
+        c.pin(QStringLiteral("zDvZ-cid-1"));
+        QCOMPARE(done.count(), 1);
+        QCOMPARE(done.last().at(0).toString(), QStringLiteral("zDvZ-cid-1"));
         QCOMPARE(done.last().at(1).toBool(), true);
-        QCOMPARE(progress.count(), 4);   // no duplicates, no losses
+        QVERIFY(m_transport.held.contains("zDvZ-cid-1"));
+        QCOMPARE(m_transport.calls.last(), QStringLiteral("fetch:zDvZ-cid-1"));
     }
 
     void pin_failureSurfacesError()
     {
-        m_storage->failPins = true;
-        StorageClient* c = makeClient();
-        QSignalSpy done(c, &StorageClient::pinFinished);
-        c->pin(QStringLiteral("cid-1"));
-        QVERIFY(done.wait(3000));
+        m_transport.fetchOk = false;
+        m_transport.fetchError = QStringLiteral("dataset not found on network");
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::pinFinished);
+        c.pin(QStringLiteral("cid-1"));
         QCOMPARE(done.last().at(1).toBool(), false);
-        QVERIFY(!done.last().at(2).toString().isEmpty());
-        QVERIFY(!m_storage->pinned.contains("cid-1"));
+        QCOMPARE(done.last().at(2).toString(), QStringLiteral("dataset not found on network"));
     }
 
     void pin_reentrancyGuarded()
     {
-        StorageClient* c = makeClient();
-        QSignalSpy done(c, &StorageClient::pinFinished);
-        c->pin(QStringLiteral("cid-1"));
-        c->pin(QStringLiteral("cid-1"));   // immediate second attempt
-        QVERIFY(done.wait(3000));
-        // one of the two finished signals is the guard rejection
-        bool sawGuard = false;
-        for (const QList<QVariant>& args : done)
-            if (args.at(2).toString() == QLatin1String("pin_in_progress"))
-                sawGuard = true;
-        if (!sawGuard)
-            QVERIFY(done.wait(3000));
-        for (const QList<QVariant>& args : done)
-            if (args.at(2).toString() == QLatin1String("pin_in_progress"))
-                sawGuard = true;
-        QVERIFY(sawGuard);
+        // a transport that never completes — second pin of the same cid must be rejected
+        struct HangingTransport : MockTransport {
+            void fetch(const QString& cid, BoolCb) override { calls << "fetch:" + cid; }
+        } hanging;
+        StorageClient c(&hanging);
+        QSignalSpy done(&c, &StorageClient::pinFinished);
+        c.pin(QStringLiteral("cid-1"));
+        c.pin(QStringLiteral("cid-1"));
+        QCOMPARE(done.count(), 1);   // only the guard rejection fired
+        QCOMPARE(done.last().at(2).toString(), QStringLiteral("pin_in_progress"));
+        QCOMPARE(hanging.calls.count("fetch:cid-1"), 1);
     }
 
-    void unpin_succeeds_andNotPinnedIsSuccess()
+    void unpin_success_andNotFoundIsSuccess()
     {
-        m_storage->pinned.insert("cid-1");
-        m_storage->repoSize = 1000;
-        StorageClient* c = makeClient();
-        QSignalSpy done(c, &StorageClient::unpinFinished);
-
-        c->unpin(QStringLiteral("cid-1"));
-        QVERIFY(done.wait(3000));
+        m_transport.held.insert("cid-1");
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::unpinFinished);
+        c.unpin(QStringLiteral("cid-1"));
         QCOMPARE(done.last().at(1).toBool(), true);
-        QVERIFY(!m_storage->pinned.contains("cid-1"));
+        QVERIFY(!m_transport.held.contains("cid-1"));
 
-        c->unpin(QStringLiteral("cid-1"));   // already gone — "not pinned" is still success
-        QVERIFY(done.wait(3000));
+        // already gone — storage says "not found"; unmirror's end state is identical
+        m_transport.removeOk = false;
+        m_transport.removeError = QStringLiteral("dataset Not Found");
+        c.unpin(QStringLiteral("cid-1"));
         QCOMPARE(done.last().at(1).toBool(), true);
     }
 
-    void queryPinned_reportsBothWays()
+    void unpin_realFailureSurfaces()
     {
-        m_storage->pinned.insert("cid-1");
-        StorageClient* c = makeClient();
-        QSignalSpy res(c, &StorageClient::pinnedResult);
+        m_transport.removeOk = false;
+        m_transport.removeError = QStringLiteral("storage corrupt");
+        StorageClient c(&m_transport);
+        QSignalSpy done(&c, &StorageClient::unpinFinished);
+        c.unpin(QStringLiteral("cid-1"));
+        QCOMPARE(done.last().at(1).toBool(), false);
+        QCOMPARE(done.last().at(2).toString(), QStringLiteral("storage corrupt"));
+    }
 
-        c->queryPinned(QStringLiteral("cid-1"));
-        QVERIFY(res.wait(3000));
+    void queryPinned_bothWays()
+    {
+        m_transport.held.insert("cid-1");
+        StorageClient c(&m_transport);
+        QSignalSpy res(&c, &StorageClient::pinnedResult);
+        c.queryPinned(QStringLiteral("cid-1"));
         QCOMPARE(res.last().at(1).toBool(), true);
-
-        c->queryPinned(QStringLiteral("cid-other"));
-        QVERIFY(res.wait(3000));
+        c.queryPinned(QStringLiteral("cid-other"));
         QCOMPARE(res.last().at(1).toBool(), false);
     }
 
     void repoStat_reportsUsedBytes()
     {
-        m_storage->repoSize = 123456;
-        StorageClient* c = makeClient();
-        QSignalSpy res(c, &StorageClient::repoStatResult);
-        c->queryRepoStat();
-        QVERIFY(res.wait(3000));
+        m_transport.usedBytes = 123456;
+        StorageClient c(&m_transport);
+        QSignalSpy res(&c, &StorageClient::repoStatResult);
+        c.queryRepoStat();
         QCOMPARE(res.last().at(0).toLongLong(), qint64(123456));
-    }
-
-    // ── live (opt-in: ARCHIVE_LIVE_STORAGE=http://host:port ARCHIVE_LIVE_CID=Qm…) ──
-
-    void live_pinUnpinRoundTrip()
-    {
-        const QByteArray ep = qgetenv("ARCHIVE_LIVE_STORAGE");
-        const QByteArray cidEnv = qgetenv("ARCHIVE_LIVE_CID");
-        if (ep.isEmpty() || cidEnv.isEmpty())
-            QSKIP("set ARCHIVE_LIVE_STORAGE + ARCHIVE_LIVE_CID to run the live pin");
-        const QString cid = QString::fromUtf8(cidEnv);
-
-        StorageClient* c = new StorageClient(this);
-        c->setEndpoint(QString::fromUtf8(ep));
-
-        QSignalSpy health(c, &StorageClient::healthChanged);
-        c->pollHealth();
-        QVERIFY(health.wait(5000));
-        QCOMPARE(health.last().at(0).toString(), QStringLiteral("ready"));
-
-        QSignalSpy done(c, &StorageClient::pinFinished);
-        c->pin(cid);
-        QVERIFY(done.wait(30000));
-        QCOMPARE(done.last().at(1).toBool(), true);
-
-        QSignalSpy pinres(c, &StorageClient::pinnedResult);
-        c->queryPinned(cid);
-        QVERIFY(pinres.wait(5000));
-        QCOMPARE(pinres.last().at(1).toBool(), true);
-
-        QSignalSpy undone(c, &StorageClient::unpinFinished);
-        c->unpin(cid);
-        QVERIFY(undone.wait(10000));
-        QCOMPARE(undone.last().at(1).toBool(), true);
     }
 };
 

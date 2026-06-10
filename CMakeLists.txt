@@ -23,6 +23,8 @@ logos_module(
         src/lez_client.cpp
         src/storage_client.h
         src/storage_client.cpp
+        src/logos_storage_transport.h
+        src/logos_storage_transport.cpp
         src/share_helper.h
         src/share_helper.cpp
 )

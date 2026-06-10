@@ -187,7 +187,10 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
                 c.curator = jsonStr(payload, "signer");
                 c.inscribedAtSlot = slot;
                 c.id = jsonStr(man, "id").isEmpty() ? txHash : jsonStr(man, "id");
-                c.title = jsonStr(man, "title").isEmpty() ? cid : jsonStr(man, "title");
+                // live channels carry "label" (cid_pin convention) rather than "title"
+                c.title = !jsonStr(man, "title").isEmpty() ? jsonStr(man, "title")
+                          : !jsonStr(man, "label").isEmpty() ? jsonStr(man, "label").left(120)
+                                                             : cid;
                 c.sizeBytes = man.value(QLatin1String("sizeBytes")).toVariant().toLongLong();
                 c.items = man.value(QLatin1String("items")).toVariant().toLongLong();
                 c.thumbnail = jsonStr(man, "thumbnail");

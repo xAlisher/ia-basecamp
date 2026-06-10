@@ -7,7 +7,9 @@
   "main": "archive_plugin",
   "view": "qml/Main.qml",
   "icon": "icons/archive.png",
-  "dependencies": [],
+  "dependencies": [
+    "storage_module"
+  ],
   "nix": {
     "packages": {
       "build": [],

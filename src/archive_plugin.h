@@ -1,6 +1,8 @@
 #ifndef ARCHIVE_PLUGIN_H
 #define ARCHIVE_PLUGIN_H
 
+#include <memory>
+
 #include <QHash>
 #include <QString>
 #include "archive_interface.h"
@@ -11,6 +13,7 @@ class LogosAPI;
 class QTimer;
 class LezClient;
 class StorageClient;
+class StorageTransport;
 
 // ui_qml module with a C++ backend (logos-delivery-demo / radio_app shape). Pure HTTP/JSON-RPC
 // client — reads the LEZ indexer and a Storage endpoint behind a trusted gateway. No platform-module
@@ -51,10 +54,10 @@ private:
     static QString cardsDir();   // Pictures/ia-archive — the only folder revealCard opens
     void pollGatewayHealth();    // ping gateway node + storage, compute syncLagBlocks (LEZ#519)
     void publishReadState();     // rebuild channelsJson/collectionsJson/summaryJson PROPs
-    void syncStorageEndpoint();  // point storage at gateway storageUrl (delegate) or local node
 
     LogosAPI*      m_logosAPI = nullptr;
     LezClient*     m_lez = nullptr;
+    std::unique_ptr<StorageTransport> m_transport;   // Logos Storage via storage_module
     StorageClient* m_storage = nullptr;
     QTimer*        m_healthTimer = nullptr;
     QHash<QString, QString> m_cidToCollection;   // in-flight pin/unpin → collection id

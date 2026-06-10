@@ -18,8 +18,6 @@ target_link_libraries(tst_lez_client PRIVATE Qt6::Core Qt6::Network Qt6::Test)
 
 add_executable(tst_storage_client
     tst_storage_client.cpp
-    mock_storage.cpp
-    mock_storage.h
     ../../src/storage_client.cpp
     ../../src/storage_client.h
 )

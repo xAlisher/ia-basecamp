@@ -1,5 +1,6 @@
 #include "archive_plugin.h"
 #include "lez_client.h"
+#include "logos_storage_transport.h"
 #include "share_helper.h"
 #include "storage_client.h"
 #include <QDesktopServices>
@@ -26,12 +27,6 @@ QString fail(const QString& code)
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
-// the user's own node when preserveMode == "local" (Kubo default RPC port)
-QString localStorageUrl()
-{
-    const QByteArray env = qgetenv("ARCHIVE_LOCAL_STORAGE_URL");
-    return env.isEmpty() ? QStringLiteral("http://127.0.0.1:5001") : QString::fromUtf8(env);
-}
 } // namespace
 
 ArchivePlugin::ArchivePlugin(QObject* parent) : ArchiveSimpleSource(parent) {}
@@ -41,9 +36,10 @@ void ArchivePlugin::initLogos(LogosAPI* api)
 {
     if (m_lez) return;
     m_logosAPI = api;
-    // Pure HTTP clients — NO LogosModules (no platform-module dep → no delivery#31, runs anywhere).
-    m_lez     = new LezClient(this);       // gateway node reads (SPEC §4.1)
-    m_storage = new StorageClient(this);   // Storage pin/replicate (P2)
+    m_lez = new LezClient(this);           // gateway node reads (SPEC §4.1) — pure HTTP
+    // Preserve goes ONLY to Logos Storage via the platform storage_module (stash's path).
+    m_transport.reset(new LogosStorageTransport(api));
+    m_storage = new StorageClient(m_transport.get(), this);
 
     connect(m_lez, &LezClient::healthChanged, this, [this](const QString& state, qint64 lag) {
         setGatewayState(state);
@@ -97,6 +93,13 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     connect(m_healthTimer, &QTimer::timeout, this, [this]{ pollGatewayHealth(); });
     m_healthTimer->start(10000);
     QTimer::singleShot(1500, this, [this]{ pollGatewayHealth(); });
+    // storage bring-up deferred — start() can take ~30s server-side; never block initLogos
+    QTimer::singleShot(0, this, [this] {
+        const QString dataDir =
+            QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+            + QStringLiteral("/ia-archive/storage");
+        m_storage->initStorage(dataDir);
+    });
     qDebug() << "ArchivePlugin: initLogos done (HTTP-client backend)";
 }
 
@@ -105,17 +108,7 @@ void ArchivePlugin::pollGatewayHealth()
     if (!m_lez)
         return;
     m_lez->pollHealth();
-    syncStorageEndpoint();
     m_storage->pollHealth();
-}
-
-void ArchivePlugin::syncStorageEndpoint()
-{
-    const auto gws = m_lez->gateways();
-    const QString gatewayStorage =
-        gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).storageUrl;
-    m_storage->setEndpoint(StorageClient::resolveEndpoint(m_lez->preserveMode(), gatewayStorage,
-                                                          localStorageUrl()));
 }
 
 void ArchivePlugin::publishReadState()
@@ -163,8 +156,6 @@ QString ArchivePlugin::choosePreserveMode(QString mode)
         return fail(QStringLiteral("invalid_mode"));
     m_lez->setPreserveMode(mode);
     setPreserveMode(mode);
-    syncStorageEndpoint();
-    m_storage->pollHealth();   // the mode switch changes which node we talk to
     return ok({ { QStringLiteral("mode"), mode } });
 }
 
@@ -227,9 +218,8 @@ QString ArchivePlugin::mirrorCollection(QString collectionId)
     // mirror, would corrupt the cid→collection ownership and the end state
     if (m_cidToCollection.contains(cid))
         return fail(QStringLiteral("storage_busy"));
-    syncStorageEndpoint();
-    if (m_storage->endpoint().isEmpty())
-        return fail(QStringLiteral("no_storage_endpoint"));
+    if (m_storage->storageState() != QLatin1String("ready"))
+        return fail(QStringLiteral("storage_offline"));
     m_cidToCollection.insert(cid, collectionId);
     m_lez->setCollectionState(collectionId, QStringLiteral("mirroring"), 0);
     m_storage->pin(cid);
@@ -245,9 +235,8 @@ QString ArchivePlugin::unmirrorCollection(QString collectionId)
         return fail(QStringLiteral("unknown_collection"));
     if (m_cidToCollection.contains(cid))
         return fail(QStringLiteral("storage_busy"));
-    syncStorageEndpoint();
-    if (m_storage->endpoint().isEmpty())
-        return fail(QStringLiteral("no_storage_endpoint"));
+    if (m_storage->storageState() != QLatin1String("ready"))
+        return fail(QStringLiteral("storage_offline"));
     m_cidToCollection.insert(cid, collectionId);
     m_storage->unpin(cid);
     return ok({ { QStringLiteral("collectionId"), collectionId } });

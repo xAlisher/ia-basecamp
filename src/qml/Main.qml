@@ -171,6 +171,7 @@ Item {
     //    clashes with the dark theme) ─────────────────────────────────────────
     component DarkButton: Button {
         id: db
+        hoverEnabled: true   // not on by default in the Basecamp host — no hover state without it
         contentItem: Text {
             text: db.text; font.pixelSize: 13
             color: !db.enabled ? root.textMuted : root.textPrimary
@@ -178,12 +179,18 @@ Item {
         }
         background: Rectangle {
             radius: 6; implicitHeight: 32; implicitWidth: 72
-            color: db.down ? root.bgActive : db.hovered ? "#3a3a3a" : root.bgSecondary
-            border.color: root.borderColor; border.width: 1
+            // a step brighter than any container it sits on (panes are #262626)
+            color: !db.enabled ? "#2A2A2A"
+                 : db.down ? "#1F1F1F"
+                 : db.hovered ? "#4A4A4A" : "#383838"
+            border.color: db.hovered && db.enabled ? "#5A5A5A" : "#4A4A4A"
+            border.width: 1
+            Behavior on color { ColorAnimation { duration: 80 } }
         }
     }
     component AccentButton: Button {
         id: ab
+        hoverEnabled: true
         contentItem: Text {
             text: ab.text; font.pixelSize: 13; font.bold: true
             color: ab.enabled ? "#FFFFFF" : root.textMuted
@@ -191,7 +198,12 @@ Item {
         }
         background: Rectangle {
             radius: 6; implicitHeight: 32; implicitWidth: 84
-            color: !ab.enabled ? root.bgSecondary : ab.down ? "#CC4000" : root.accentOrange
+            color: !ab.enabled ? "#2A2A2A"
+                 : ab.down ? "#CC4000"
+                 : ab.hovered ? "#FF6A26" : root.accentOrange
+            border.color: ab.enabled ? "transparent" : "#4A4A4A"
+            border.width: ab.enabled ? 0 : 1
+            Behavior on color { ColorAnimation { duration: 80 } }
         }
     }
     component DarkField: TextField {
@@ -380,18 +392,17 @@ Item {
                 spacing: 8
                 Label { text: "Preserve mode"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
                 DarkRadio {
-                    text: "Delegate — the gateway pins for you (zero-infra)"
-                    checked: root.preserveMode === "delegate"
-                    onClicked: root.call("choosePreserveMode", ["delegate"],
-                                         function(r) { if (r && r.ok) root.logEvent("config", "Mode → delegate") })
-                }
-                DarkRadio {
-                    text: "Local — replicate to your own Storage node"
+                    text: "Local — replicate to your Logos Storage node"
                     checked: root.preserveMode === "local"
                     onClicked: root.call("choosePreserveMode", ["local"],
                                          function(r) { if (r && r.ok) root.logEvent("config", "Mode → local") })
                 }
-                Label { text: "Gateway"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
+                DarkRadio {
+                    text: "Delegate — a campaign gateway pins for you (coming with campaign gateways)"
+                    enabled: false
+                    checked: root.preserveMode === "delegate"
+                }
+                Label { text: "Gateway node"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
@@ -401,17 +412,11 @@ Item {
                         fieldBg: root.bgPrimary
                         placeholderText: "node URL — http://gateway:8080"
                     }
-                    DarkField {
-                        id: storageUrlField
-                        Layout.fillWidth: true
-                        fieldBg: root.bgPrimary
-                        placeholderText: "storage URL — http://gateway:5001"
-                    }
                     DarkButton {
                         text: "Apply"
                         enabled: nodeUrlField.text.length > 0
                         onClicked: root.call("setGateways",
-                            [JSON.stringify([{ nodeUrl: nodeUrlField.text, storageUrl: storageUrlField.text }])],
+                            [JSON.stringify([{ nodeUrl: nodeUrlField.text }])],
                             function(r) { if (r && r.ok) root.logEvent("config", "Gateway set: " + nodeUrlField.text) })
                     }
                 }
