@@ -84,8 +84,10 @@ void ArchivePlugin::initLogos(LogosAPI* api)
         if (!upOk) {
             m_lez->setCollectionState(collectionId, QStringLiteral("error"));
             m_lastError = QStringLiteral("reseed_upload_failed: ") + error;
+            qWarning() << "ArchivePlugin: reseed upload failed for" << collectionId << error;
             return;
         }
+        qInfo() << "ArchivePlugin: reseed complete —" << collectionId << "now provided as" << cid;
         if (!cid.isEmpty() && cid != m_reseedCid)
             qWarning() << "ArchivePlugin: reseeded CID differs from inscribed:" << cid
                        << "vs" << m_reseedCid;   // content drifted at the source — still held
@@ -281,6 +283,8 @@ void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
     req.setRawHeader("User-Agent", "ia-basecamp/0.2");
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::NoLessSafeRedirectPolicy);   // IA always redirects
+    req.setTransferTimeout(30000);   // inactivity cap — dead IA dn-nodes hang forever
+    qInfo() << "ArchivePlugin: reseed downloading" << url.toString();
     QNetworkReply* reply = m_nam->get(req);
 
     const QString tmpPath = QDir::tempPath()
@@ -307,9 +311,20 @@ void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
             m_reseedCollectionId.clear();
             m_reseedTmpPath.clear();
             m_lez->setCollectionState(collectionId, QStringLiteral("error"));
-            m_lastError = QStringLiteral("ia_download_failed: ") + reply->errorString();
+            const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            // 404s and dead dn-node timeouts = the file isn't really on IA
+            // (keeper-synthetic entries like metadata.json) — say so plainly
+            const bool notAvailable = http == 404
+                || reply->error() == QNetworkReply::ContentNotFoundError
+                || reply->error() == QNetworkReply::OperationCanceledError;
+            m_lastError = notAvailable
+                ? QStringLiteral("file not available on the Internet Archive")
+                : QStringLiteral("ia_download_failed: ") + reply->errorString();
+            qWarning() << "ArchivePlugin: reseed failed for" << collectionId
+                       << "http" << http << reply->errorString();
             return;
         }
+        qInfo() << "ArchivePlugin: reseed downloaded" << out->size() << "bytes — uploading";
         // hand the bytes to Logos Storage — completion via uploadFinished above
         m_storage->upload(tmpPath);
     });
