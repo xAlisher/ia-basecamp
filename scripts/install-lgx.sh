@@ -12,7 +12,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-LGPM=${LGPM:-$(find /nix/store -maxdepth 3 -name lgpm -path "*logos-package-manager-cli*" 2>/dev/null | head -1)}
+# Newest store copy by mtime — `| head -1` alone picks an arbitrary hash-ordered path.
+LGPM=${LGPM:-$(find /nix/store -maxdepth 3 -name lgpm -path "*logos-package-manager-cli*" \
+    -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)}
 [ -n "$LGPM" ] || { echo "lgpm not found in /nix/store"; exit 1; }
 MDIR=~/.local/share/Logos/LogosBasecamp/modules
 PDIR=~/.local/share/Logos/LogosBasecamp/plugins
@@ -27,6 +29,9 @@ cd "$WORK"
 tar -xzf "$OLDPWD/result-lgx/logos-archive-module.lgx";          mv manifest.json manifest-dev.json
 tar -xzf "$OLDPWD/result-lgx-portable/logos-archive-module.lgx"; mv manifest.json manifest-amd64.json
 
+# Format-fragile by design (dev workflow): top-level root/variants hashes stay the
+# amd64 package's values — current lgpm rewrites the installed manifest's hashes
+# itself, but stricter future validation may reject this merged package.
 python3 - <<'EOF'
 import json
 dev = json.load(open('manifest-dev.json'))

@@ -60,6 +60,10 @@ A single **`ui_qml` module with a compiled C++ backend** (the `logos-delivery-de
 The LEZ **indexer** exposes a JSON-RPC read API (`jsonrpsee`); the **explorer** exposes a public web
 API over it (keeper already uses `https://testnet.blockchain.logos.co/web/explorer/api/v1/...`).
 
+> **Superseded by the P0 spike — see §4.1.** The table below was the pre-spike assumption; the
+> jsonrpsee indexer turned out to serve zone-state only and cannot see raw-JSON curated channels.
+> Kept for context on what the gateway *could* serve for zone-backed channels.
+
 | Need | Indexer method |
 |------|----------------|
 | List a channel's full inscription history | `getTransactionsByAccount(channelAccount, offset, limit)` |

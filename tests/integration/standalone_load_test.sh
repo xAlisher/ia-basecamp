@@ -20,12 +20,11 @@ nix build --no-link .
 echo "Running standalone harness (log: $LOG)..."
 # Without these, qDebug output (ViewModuleHost/ui-host lines) never reaches the log.
 export QT_ASSUME_STDERR_HAS_CONSOLE=1 QT_FORCE_STDERR_LOGGING=1
-nix run . > "$LOG" 2>&1 &
+# Own process group so cleanup kills the harness + its ui-host children, nothing else.
+setsid nix run . > "$LOG" 2>&1 &
 APP_PID=$!
 cleanup() {
-    kill "$APP_PID" 2>/dev/null || true
-    pkill -9 -f "logos-standalone-app" 2>/dev/null || true
-    pkill -9 -f 'ui-host.*archive' 2>/dev/null || true
+    kill -9 -- "-$APP_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
