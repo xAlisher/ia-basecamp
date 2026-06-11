@@ -4,6 +4,7 @@
 #include "share_helper.h"
 #include "storage_client.h"
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -439,12 +440,51 @@ QString ArchivePlugin::finalizeShareCard(const QString& tmpPath, const QString& 
     return QString::fromUtf8(QJsonDocument(r).toJson(QJsonDocument::Compact));
 }
 
-QString ArchivePlugin::openExplorerTx(const QString& txHash)
+QString ArchivePlugin::openExplorerTx(const QString& txHash, const QString& blockHash,
+                                      int txIndex)
 {
+    // The scan stores the node's mantle_tx.hash, which the explorer does not index
+    // (#9) — the explorer's own hash is reachable only via the tx's position in its
+    // block, so resolve through /api/blocks/{blockHash} and fall back to the block
+    // page when the join isn't possible.
     static const QRegularExpression hex64(QStringLiteral("^[0-9a-fA-F]{64}$"));
-    if (!hex64.match(txHash).hasMatch())
+    if (!hex64.match(txHash).hasMatch() && !hex64.match(blockHash).hasMatch())
         return fail(QStringLiteral("invalid_tx_hash"));
-    const QString url = QStringLiteral("https://logosblocks.noders.services/txs/") + txHash.toLower();
+
+    const QString base = QString::fromLatin1(LezClient::kExplorerBase);
+    QString url;
+
+    if (hex64.match(blockHash).hasMatch()) {
+        url = base + QStringLiteral("/blocks/") + blockHash.toLower();   // always-valid fallback
+        if (txIndex >= 0) {
+            if (!m_nam)
+                m_nam = new QNetworkAccessManager(this);
+            QNetworkRequest req(QUrl(base + QStringLiteral("/api/blocks/") + blockHash.toLower()));
+            req.setTransferTimeout(5000);
+            QNetworkReply* reply = m_nam->get(req);
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+            if (reply->error() == QNetworkReply::NoError) {
+                const QJsonObject blk = QJsonDocument::fromJson(reply->readAll()).object();
+                for (const QJsonValue& tv : blk.value(QLatin1String("transactions")).toArray()) {
+                    const QJsonObject tx = tv.toObject();
+                    if (tx.value(QLatin1String("index_in_block")).toInt(-1) == txIndex) {
+                        const QString eh = tx.value(QLatin1String("tx_hash")).toString();
+                        if (hex64.match(eh).hasMatch())
+                            url = base + QStringLiteral("/txs/") + eh.toLower();
+                        break;
+                    }
+                }
+            }
+            reply->deleteLater();
+        }
+    } else {
+        // legacy rows without blockHash: the node hash is all we have — likely a
+        // dead link on the explorer, but there is nothing better to offer
+        url = base + QStringLiteral("/txs/") + txHash.toLower();
+    }
+
 #if defined(Q_OS_DARWIN)
     const QString opener = QStringLiteral("open");
 #elif defined(Q_OS_WIN)

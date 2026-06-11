@@ -60,6 +60,31 @@ void MockNode::handleConnection()
                     slice.append(bv);
             }
             body = QJsonDocument(slice).toJson(QJsonDocument::Compact);
+        } else if (url.path().startsWith(QLatin1String("/api/channel/"))) {
+            // explorer stand-in: channel metadata for scan-bound resolution (#10)
+            if (channelInfo.isEmpty()) {
+                status = 404;
+                body = R"({"detail":"Not Found"})";
+            } else {
+                body = QJsonDocument(channelInfo).toJson(QJsonDocument::Compact);
+            }
+        } else if (url.path().startsWith(QLatin1String("/api/blocks/"))) {
+            // explorer stand-in: block by header id, flat {slot, transactions} shape
+            const QString wantId = url.path().mid(int(qstrlen("/api/blocks/")));
+            status = 404;
+            body = R"({"detail":"Not Found"})";
+            for (const QJsonValue& bv : std::as_const(blocks)) {
+                const QJsonObject header = bv.toObject()
+                                               .value(QLatin1String("header")).toObject();
+                if (header.value(QLatin1String("id")).toString() == wantId) {
+                    status = 200;
+                    body = QJsonDocument(QJsonObject{
+                        { QStringLiteral("header_id"), wantId },
+                        { QStringLiteral("slot"), header.value(QLatin1String("slot")) },
+                    }).toJson(QJsonDocument::Compact);
+                    break;
+                }
+            }
         } else {
             status = 404;
             body = R"({"error":"not found"})";

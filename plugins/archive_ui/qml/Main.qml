@@ -187,8 +187,12 @@ Item {
         return (bytes / 1073741824).toFixed(2) + " GB"
     }
     function shortId(s) { return s ? s.substring(0, 8) + "…" : "" }
-    function explorerUrl(tx) {
-        return "https://logosblocks.noders.services/txs/" + tx
+    // node tx hashes are NOT valid explorer /txs links — prefer the block page,
+    // which always resolves; the backend upgrades it to the real tx page on open
+    function explorerUrl(col) {
+        if (col && col.blockHash)
+            return "https://logosblocks.noders.services/blocks/" + col.blockHash
+        return "https://logosblocks.noders.services/txs/" + (col && col.txHash ? col.txHash : col)
     }
     function copyText(t) { clipHelper.text = t; clipHelper.selectAll(); clipHelper.copy(); clipHelper.text = "" }
     TextEdit { id: clipHelper; visible: false }
@@ -828,8 +832,15 @@ Item {
                                     enabled: !!modelData.txHash
                                     onClicked: {
                                         var R = root
-                                        R.copyText(R.explorerUrl(modelData.txHash))
-                                        R.call("openExplorerTx", [modelData.txHash], function(r) {
+                                        // the backend resolves the explorer's own tx hash
+                                        // (node hash is a dead link there) — copy what it
+                                        // actually opened, block page as the fallback
+                                        var fallback = R.explorerUrl(modelData)
+                                        R.call("openExplorerTx",
+                                               [modelData.txHash, modelData.blockHash || "",
+                                                modelData.txIndex !== undefined ? modelData.txIndex : -1],
+                                               function(r) {
+                                            R.copyText(r && r.url ? r.url : fallback)
                                             R.toast(r && r.ok ? "Opening in explorer (link copied too)"
                                                               : "Explorer link copied")
                                         })

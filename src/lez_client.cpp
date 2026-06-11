@@ -65,6 +65,13 @@ QNetworkReply* LezClient::httpGet(const QString& path, const QString& query, int
     return m_net->get(req);
 }
 
+QNetworkReply* LezClient::httpGetUrl(const QUrl& url)
+{
+    QNetworkRequest req(url);
+    req.setTransferTimeout(kHttpTimeoutMs);
+    return m_net->get(req);
+}
+
 void LezClient::failOver(const QString& code)
 {
     m_gatewayState = QStringLiteral("offline");
@@ -146,10 +153,11 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
         const qint64 slot = header.value(QLatin1String("slot")).toVariant().toLongLong();
         if (slot > libSlot)
             continue;   // finalized data only — never surface pre-LIB inscriptions
+        const QString blockHash = jsonStr(header, "id");
 
         const QJsonArray txs = block.value(QLatin1String("transactions")).toArray();
-        for (const QJsonValue& tv : txs) {
-            const QJsonObject tx = tv.toObject();
+        for (int txIdx = 0; txIdx < txs.size(); ++txIdx) {
+            const QJsonObject tx = txs.at(txIdx).toObject();
             const QJsonObject mantle = tx.contains(QLatin1String("mantle_tx"))
                                            ? tx.value(QLatin1String("mantle_tx")).toObject()
                                            : tx;
@@ -184,6 +192,8 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
                 c.channelId = channelId;
                 c.cid = cid;
                 c.txHash = txHash;
+                c.blockHash = blockHash;
+                c.txIndex = txIdx;
                 c.curator = jsonStr(payload, "signer");
                 c.inscribedAtSlot = slot;
                 c.id = jsonStr(man, "id").isEmpty() ? txHash : jsonStr(man, "id");
@@ -338,6 +348,60 @@ void LezClient::startScan(const QString& channelId)
     // pin the whole scan to one gateway: lib_slot and every page must come from the
     // same finalized view, or cursor advancement could silently skip inscriptions
     const int gatewayIdx = m_active;
+
+    // #10: a fresh follow without a user @slot hint would crawl from genesis —
+    // ask the explorer where the channel actually starts first
+    const Channel& ch = m_channels.value(channelId);
+    if (ch.startSlot == 0 && ch.cursor == 0 && !m_explorerBase.isEmpty())
+        resolveScanStart(channelId, generation, gatewayIdx);
+    else
+        fetchInfoAndScan(channelId, generation, gatewayIdx);
+}
+
+void LezClient::resolveScanStart(const QString& channelId, qint64 generation, int gatewayIdx)
+{
+    QNetworkReply* chReply = httpGetUrl(
+        QUrl(m_explorerBase + QStringLiteral("/api/channel/") + channelId));
+    connect(chReply, &QNetworkReply::finished, this,
+            [this, chReply, channelId, generation, gatewayIdx] {
+        chReply->deleteLater();
+        if (m_scanning.value(channelId, -1) != generation)
+            return;
+        QString firstBlock;
+        if (chReply->error() == QNetworkReply::NoError) {
+            const QJsonObject info = QJsonDocument::fromJson(chReply->readAll()).object();
+            firstBlock = info.value(QLatin1String("first_seen_block_id")).toString();
+            // untrusted response lands in a URL — accept nothing but a block id
+            static const QRegularExpression hex64(QStringLiteral("^[0-9a-fA-F]{64}$"));
+            if (!hex64.match(firstBlock).hasMatch())
+                firstBlock.clear();
+        }
+        if (firstBlock.isEmpty()) {   // explorer down or channel unknown — scan as before
+            fetchInfoAndScan(channelId, generation, gatewayIdx);
+            return;
+        }
+        QNetworkReply* bReply = httpGetUrl(
+            QUrl(m_explorerBase + QStringLiteral("/api/blocks/") + firstBlock));
+        connect(bReply, &QNetworkReply::finished, this,
+                [this, bReply, channelId, generation, gatewayIdx] {
+            bReply->deleteLater();
+            if (m_scanning.value(channelId, -1) != generation)
+                return;
+            if (bReply->error() == QNetworkReply::NoError) {
+                const QJsonObject blk = QJsonDocument::fromJson(bReply->readAll()).object();
+                const qint64 slot = blk.value(QLatin1String("slot")).toVariant().toLongLong();
+                if (slot > 0 && m_channels.contains(channelId)) {
+                    m_channels[channelId].startSlot = slot;   // persists — once per follow
+                    saveState();
+                }
+            }
+            fetchInfoAndScan(channelId, generation, gatewayIdx);
+        });
+    });
+}
+
+void LezClient::fetchInfoAndScan(const QString& channelId, qint64 generation, int gatewayIdx)
+{
     QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/info"), QString(), gatewayIdx);
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, channelId, generation, gatewayIdx] {
@@ -468,6 +532,8 @@ QJsonArray LezClient::collectionsJson(const QString& channelId) const
                 { QStringLiteral("thumbnail"), c.thumbnail },
                 { QStringLiteral("inscribedAt"), c.inscribedAtSlot },
                 { QStringLiteral("txHash"), c.txHash },
+                { QStringLiteral("blockHash"), c.blockHash },
+                { QStringLiteral("txIndex"), c.txIndex },
                 { QStringLiteral("curator"), c.curator },
                 { QStringLiteral("state"), c.state },
                 { QStringLiteral("progressBlocks"), c.progressBlocks },
@@ -566,6 +632,8 @@ void LezClient::saveState() const
                 { QStringLiteral("thumbnail"), c.thumbnail },
                 { QStringLiteral("inscribedAt"), c.inscribedAtSlot },
                 { QStringLiteral("txHash"), c.txHash },
+                { QStringLiteral("blockHash"), c.blockHash },
+                { QStringLiteral("txIndex"), c.txIndex },
                 { QStringLiteral("curator"), c.curator },
                 { QStringLiteral("state"), c.state },
                 { QStringLiteral("iaId"), c.iaId },
@@ -651,6 +719,12 @@ void LezClient::loadState()
             col.thumbnail = jsonStr(c, "thumbnail");
             col.inscribedAtSlot = c.value(QLatin1String("inscribedAt")).toVariant().toLongLong();
             col.txHash = jsonStr(c, "txHash");
+            col.blockHash = jsonStr(c, "blockHash");
+            // rows persisted before #9 lack txIndex — -1 keeps the explorer
+            // resolve on its block-page fallback instead of a wrong-index join
+            col.txIndex = c.contains(QLatin1String("txIndex"))
+                              ? c.value(QLatin1String("txIndex")).toVariant().toLongLong()
+                              : -1;
             col.curator = jsonStr(c, "curator");
             col.state = jsonStr(c, "state");
             col.iaId = jsonStr(c, "iaId");

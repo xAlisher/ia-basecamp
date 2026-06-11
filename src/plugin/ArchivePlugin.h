@@ -68,7 +68,11 @@ public:
     Q_INVOKABLE QString saveShareCard(const QString& pngBase64, const QString& name);
     Q_INVOKABLE QString finalizeShareCard(const QString& tmpPath, const QString& name);
     Q_INVOKABLE QString revealCard(const QString& path);
-    Q_INVOKABLE QString openExplorerTx(const QString& txHash);   // browser via system opener
+    // browser via system opener; blockHash+txIndex resolve the explorer's own tx
+    // hash (node hash is not indexed there, #9) — block page is the fallback
+    Q_INVOKABLE QString openExplorerTx(const QString& txHash,
+                                       const QString& blockHash = QString(),
+                                       int txIndex = -1);
 
 signals:
     // ModuleProxy requires this exact signal on the concrete class —

@@ -34,7 +34,9 @@ public:
         qint64  items = 0;
         QString thumbnail;
         qint64  inscribedAtSlot = 0;
-        QString txHash;
+        QString txHash;      // node mantle_tx.hash — NOT the explorer's hash (#9)
+        QString blockHash;   // L1 block header id — join key to the explorer
+        qint64  txIndex = -1;   // position within the block — explorer index_in_block
         QString curator;     // inscription signer
         QString state;       // available | mirroring | mirrored | error (P2 drives this)
         qint64  progressBlocks = 0;   // transient pin progress while state == mirroring
@@ -57,6 +59,9 @@ public:
 
     static constexpr qint64 kPageSlots = 2000;     // slots per /blocks request
     static constexpr int    kMaxPagesPerRefresh = 100;
+    // Explorer is an optimizer (scan bounds) and link target only — never a data
+    // source for inscriptions; the gateway node stays the source of truth (#10)
+    static constexpr const char* kExplorerBase = "https://logosblocks.noders.services";
     static constexpr qint64 kLagDegradedThreshold = 1200;  // ~2× the normal in-flight window
     static constexpr int    kHttpTimeoutMs = 10000;
     // Defensive caps on untrusted gateway responses
@@ -68,6 +73,8 @@ public:
     // config
     void setGateways(const QList<Gateway>& gws);
     QList<Gateway> gateways() const { return m_gateways; }
+    // empty disables explorer-assisted scan bounds (tests point this at MockNode)
+    void setExplorerBase(const QString& base) { m_explorerBase = base; }
     int activeGateway() const { return m_active; }
     QString preserveMode() const { return m_preserveMode; }
     void setPreserveMode(const QString& mode);
@@ -119,16 +126,22 @@ signals:
 
 private:
     void startScan(const QString& channelId);
+    // #10: resolve the channel's first-seen slot from the explorer before the first
+    // scan — falls through to fetchInfoAndScan unchanged on any failure
+    void resolveScanStart(const QString& channelId, qint64 generation, int gatewayIdx);
+    void fetchInfoAndScan(const QString& channelId, qint64 generation, int gatewayIdx);
     void scanNextPage(const QString& channelId, qint64 generation, int gatewayIdx,
                       qint64 libSlot, int pagesLeft);
     // gatewayIdx -1 = current active; scans pin their gateway so one consistent
     // finalized view drives the whole pagination
     QNetworkReply* httpGet(const QString& path, const QString& query = QString(),
                            int gatewayIdx = -1);
+    QNetworkReply* httpGetUrl(const QUrl& url);   // absolute-URL GET (explorer calls)
     void failOver(const QString& code);
 
     QNetworkAccessManager* m_net = nullptr;
     QList<Gateway> m_gateways;
+    QString m_explorerBase = QString::fromLatin1(kExplorerBase);
     int m_active = 0;
     // "local" is the only live mode — preserve goes to Logos Storage via the platform
     // storage_module; "delegate" returns when campaign gateways exist

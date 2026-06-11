@@ -70,6 +70,9 @@ private:
     {
         auto* c = new LezClient(this);
         c->setGateways({ { m_node->baseUrl(), QString() } });
+        // explorer-assisted scan bounds off by default — tests opting in point
+        // the base at MockNode's /api/* stand-ins (never the real explorer)
+        c->setExplorerBase(QString());
         return c;
     }
 
@@ -168,9 +171,76 @@ private slots:
         QCOMPARE(cols[0].items, qint64(3));
         QCOMPARE(cols[0].thumbnail, QStringLiteral("thumb-cid"));
         QCOMPARE(cols[0].txHash, QStringLiteral("tx-1"));
+        QCOMPARE(cols[0].blockHash, QStringLiteral("b9000"));   // explorer join key (#9)
+        QCOMPARE(cols[0].txIndex, qint64(0));
         QCOMPARE(cols[0].curator, QStringLiteral("sig-1"));
         QCOMPARE(cols[0].inscribedAtSlot, qint64(9000));
         QCOMPARE(cols[0].state, QStringLiteral("available"));
+    }
+
+    void extract_txIndexTracksPositionInBlock()
+    {
+        // the explorer indexes its own tx hash by position — a wrong index would
+        // silently open someone else's transaction (#9)
+        const QJsonObject multiTx{
+            { "header", QJsonObject{ { "slot", 9100 }, { "id", "b9100" } } },
+            { "transactions", QJsonArray{
+                  QJsonObject{ { "mantle_tx", QJsonObject{
+                        { "hash", "tx-other" },
+                        { "ops", QJsonArray{ inscribeOp(kOtherChannel,
+                              manifest("cx", "Other", "cid-x", 1), "sx") } } } } },
+                  QJsonObject{ { "mantle_tx", QJsonObject{
+                        { "hash", "tx-ours" },
+                        { "ops", QJsonArray{ inscribeOp(kChannel,
+                              manifest("c2", "Mine", "cid-2", 2), "s2") } } } } },
+              } },
+        };
+        const auto cols = LezClient::extractCollections({ multiTx }, kChannel, 10000);
+        QCOMPARE(cols.size(), 1);
+        QCOMPARE(cols[0].blockHash, QStringLiteral("b9100"));
+        QCOMPARE(cols[0].txIndex, qint64(1));
+    }
+
+    void scan_explorerBoundsFreshFollow()
+    {
+        // inscription 599k slots deep; one refresh covers kPageSlots×kMaxPages=200k,
+        // so a genesis crawl cannot reach it — only the explorer bound can (#10)
+        const QString hexId = QStringLiteral("ab").repeated(32);
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Deep", "cid-1", 1), "sig") };
+        m_node->blocks = QJsonArray{ QJsonObject{
+            { "header", QJsonObject{ { "slot", 599000 }, { "id", hexId } } },
+            { "transactions", QJsonArray{ QJsonObject{ { "mantle_tx",
+                  QJsonObject{ { "hash", "tx-deep" }, { "ops", ops } } } } } },
+        } };
+        m_node->info = QJsonObject{ { "slot", 600400 }, { "lib_slot", 600000 },
+                                    { "tip", "t" },     { "mode", "Online" } };
+        m_node->channelInfo = QJsonObject{ { "first_seen_block_id", hexId },
+                                           { "last_seen_slot", 599000 } };
+
+        LezClient* c = makeClient();
+        c->setExplorerBase(m_node->baseUrl());
+        ScanWaiter waiter(c);
+        c->followChannel(kChannel);   // deliberately no @slot hint
+        QVERIFY(waiter.wait(kChannel));
+        const QJsonArray cols = c->collectionsJson();
+        QCOMPARE(cols.size(), 1);
+        QCOMPARE(cols.at(0).toObject().value("blockHash").toString(), hexId);
+        QCOMPARE(cols.at(0).toObject().value("txIndex").toInt(), 0);
+    }
+
+    void scan_explorerUnreachableFallsBack()
+    {
+        // explorer 404s (empty channelInfo) — fresh follow scans from genesis as
+        // before; inscription within the first refresh window is still found
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Near", "cid-1", 1), "sig") };
+        m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
+
+        LezClient* c = makeClient();
+        c->setExplorerBase(m_node->baseUrl());   // mock returns 404 for /api/channel/*
+        ScanWaiter waiter(c);
+        c->followChannel(kChannel);
+        QVERIFY(waiter.wait(kChannel));
+        QCOMPARE(c->collectionsJson().size(), 1);
     }
 
     void extract_finalizedOnly()
