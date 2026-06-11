@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariantList>
 
@@ -126,4 +127,10 @@ private:
     static constexpr qint64 kAutoPreserveMaxBytes = 1024 * 1024 * 1024;   // 1 GiB
     void drainAutoQueue();
     QStringList m_autoQueue;   // item ids awaiting their turn (#17)
+
+    // #18: desktop notifications via notify-send (the org.freedesktop.Notifications
+    // D-Bus call, no QtDBus link). Publish notices only fire once a channel has
+    // fully synced — a fresh follow of a channel with history must not storm.
+    void notifyDesktop(const QString& summary, const QString& body);
+    QSet<QString> m_syncedOnce;
 };

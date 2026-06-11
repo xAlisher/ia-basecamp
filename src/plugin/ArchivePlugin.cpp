@@ -130,6 +130,8 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     // without the user hammering refresh; stop while the gateway is down
     connect(m_lez, &LezClient::scanFinished, this,
             [this](const QString& channelId, bool reachedLib) {
+        if (reachedLib)
+            m_syncedOnce.insert(channelId);   // publish notifications arm here (#18)
         if (reachedLib || !m_lez->isFollowed(channelId))
             return;
         if (m_lez->gatewayState() == QLatin1String("offline"))
@@ -141,22 +143,35 @@ void ArchivePlugin::initLogos(LogosAPI* api)
         });
     });
 
-    // #17: auto-preserve — eligible new items queue up; the drain respects the
-    // one-preserve-in-flight contract and runs off the existing health tick
+    // #17/#18: new items either queue for auto-preserve or notify the user.
+    // The drain respects the one-preserve-in-flight contract (health tick re-drains).
     connect(m_lez, &LezClient::itemsDiscovered, this,
             [this](const QString& channelId, const QStringList& itemIds) {
-        if (!m_lez->autoPreserve(channelId))
-            return;
+        const bool autoOn = m_lez->autoPreserve(channelId);
+        const bool synced = m_syncedOnce.contains(channelId);
         for (const QJsonValue& v : m_lez->itemsJson(channelId)) {
             const QJsonObject c = v.toObject();
             const QString id = c.value(QStringLiteral("id")).toString();
             if (!itemIds.contains(id))
                 continue;
+            const QString title = c.value(QStringLiteral("title")).toString();
             const qint64 size = c.value(QStringLiteral("sizeBytes")).toVariant().toLongLong();
+            const QString sizeStr = size > 0
+                ? QStringLiteral("%1 MB").arg(QString::number(size / (1024.0 * 1024.0), 'f', 1))
+                : QStringLiteral("size unknown");
+            if (!autoOn) {
+                if (synced)   // incremental discovery only — never a backfill storm
+                    notifyDesktop(QStringLiteral("%1 (%2) published").arg(title, sizeStr),
+                                  QStringLiteral("Open Archive to preserve it."));
+                continue;
+            }
             if (size > kAutoPreserveMaxBytes) {
-                m_lastError = QStringLiteral("auto-preserve skipped %1 — %2 MB over the cap")
-                                  .arg(id).arg(size / (1024 * 1024));
+                m_lastError = QStringLiteral("auto-preserve skipped %1 — %2 over the 1 GiB cap")
+                                  .arg(id, sizeStr);
                 qWarning() << "ArchivePlugin:" << m_lastError;
+                if (synced)
+                    notifyDesktop(QStringLiteral("%1 (%2) skipped").arg(title, sizeStr),
+                                  QStringLiteral("Over the auto-preserve size cap — preserve manually."));
                 continue;
             }
             if (!m_autoQueue.contains(id))
@@ -473,6 +488,17 @@ void ArchivePlugin::iaFail(const QString& error)
     m_lez->setItemState(itemId, QStringLiteral("error"));
     m_lastError = error;
     qWarning() << "ArchivePlugin: ia_item preserve failed for" << itemId << "—" << error;
+    notifyDesktop(QStringLiteral("Preserve failed: %1").arg(itemId), error);
+}
+
+void ArchivePlugin::notifyDesktop(const QString& summary, const QString& body)
+{
+    // notify-send IS org.freedesktop.Notifications over D-Bus; using the binary
+    // avoids a QtDBus link for one call. Missing binary → startDetached fails,
+    // the activity log still carries every event.
+    QProcess::startDetached(QStringLiteral("notify-send"),
+                            { QStringLiteral("--app-name=Logos Archive"),
+                              summary, body });
 }
 
 void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
@@ -526,6 +552,9 @@ void ArchivePlugin::iaNextFile()
                 << total << "files," << unverified << "without published checksums";
         if (unverified > 0)
             m_lastError = QStringLiteral("preserved with %1 unverified file(s) — IA publishes no checksum for them").arg(unverified);
+        notifyDesktop(QStringLiteral("%1 preserved ✓").arg(itemId),
+                      QStringLiteral("%1 files, checksum-verified against the Internet Archive.")
+                          .arg(total));
         return;
     }
 
