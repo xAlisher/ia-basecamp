@@ -345,6 +345,17 @@ bool LezClient::setChannelLabel(const QString& channelId, const QString& label)
     return true;
 }
 
+bool LezClient::setAutoPreserve(const QString& channelId, bool on)
+{
+    const QString id = channelId.toLower();
+    if (!m_channels.contains(id))
+        return false;
+    m_channels[id].autoPreserve = on;
+    saveState();
+    emit channelsChanged();
+    return true;
+}
+
 bool LezClient::unfollowChannel(const QString& channelId)
 {
     const QString id = channelId.toLower();
@@ -507,6 +518,7 @@ void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gateway
         // reacquire after the parse — never hold the reference across anything async
         Channel& ch = m_channels[channelId];
         bool added = false;
+        QStringList newIds;
         for (const Item& c : found) {
             const bool dup = std::any_of(ch.items.cbegin(), ch.items.cend(),
                                          [&c](const Item& e) { return e.txHash == c.txHash && e.id == c.id; });
@@ -518,6 +530,7 @@ void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gateway
             ch.items.append(c);
             ch.lastInscription = qMax(ch.lastInscription, c.inscribedAtSlot);
             ch.curator = c.curator;
+            newIds.append(c.id);
             added = true;
         }
         ch.cursor = to;
@@ -533,8 +546,10 @@ void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gateway
         total.skippedDuplicate += pageStats.skippedDuplicate;
         total.otherChannelOps += pageStats.otherChannelOps;
 
-        if (added)
+        if (added) {
             emit itemsChanged();
+            emit itemsDiscovered(channelId, newIds);
+        }
         scanNextPage(channelId, ctx, gatewayIdx, libSlot, pagesLeft - 1);
     });
 }
@@ -552,6 +567,7 @@ QJsonArray LezClient::channelsJson() const
             { QStringLiteral("items"), ch.items.size() },
             { QStringLiteral("lastInscription"), ch.lastInscription },
             { QStringLiteral("synced"), ch.synced },
+            { QStringLiteral("autoPreserve"), ch.autoPreserve },
         };
         if (!ch.synced && ch.lastLibSlot > ch.startSlot && ch.cursor >= ch.startSlot)
             row.insert(QStringLiteral("progress"),
@@ -713,6 +729,7 @@ void LezClient::saveState() const
             { QStringLiteral("label"), ch.label },
             { QStringLiteral("startSlot"), ch.startSlot },
             { QStringLiteral("cursor"), ch.cursor },
+            { QStringLiteral("autoPreserve"), ch.autoPreserve },
             { QStringLiteral("lastInscription"), ch.lastInscription },
             { QStringLiteral("curator"), ch.curator },
             { QStringLiteral("synced"), ch.synced },
@@ -734,11 +751,11 @@ void LezClient::saveState() const
     }
 }
 
-void LezClient::loadState()
+bool LezClient::loadState()
 {
     QFile f(stateFilePath());
     if (!f.open(QIODevice::ReadOnly))
-        return;
+        return false;   // true first run — caller may seed defaults (#15)
     QJsonParseError parseErr{};
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &parseErr);
     if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) {
@@ -747,7 +764,7 @@ void LezClient::loadState()
         QFile::remove(stateFilePath() + QStringLiteral(".corrupt"));
         QFile::rename(stateFilePath(), stateFilePath() + QStringLiteral(".corrupt"));
         emit errorOccurred(QStringLiteral("state_corrupt"));
-        return;
+        return true;   // a corrupt file is still "had state" — never re-seed over it
     }
     const QJsonObject root = doc.object();
 
@@ -775,6 +792,7 @@ void LezClient::loadState()
         ch.lastInscription = co.value(QLatin1String("lastInscription")).toVariant().toLongLong();
         ch.curator = jsonStr(co, "curator");
         ch.synced = co.value(QLatin1String("synced")).toBool();
+        ch.autoPreserve = co.value(QLatin1String("autoPreserve")).toBool();
         // migration: state persisted before the collections→items rename (#13)
         const QJsonArray itemRows = co.contains(QLatin1String("items"))
                                         ? co.value(QLatin1String("items")).toArray()
@@ -818,4 +836,5 @@ void LezClient::loadState()
         emit channelsChanged();
         emit itemsChanged();
     }
+    return true;
 }

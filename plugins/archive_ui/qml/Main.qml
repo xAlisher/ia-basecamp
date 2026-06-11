@@ -43,6 +43,7 @@ Item {
         return { channelId: h.channelId || "", name: h.name || "",
                  curator: h.curator || "", items: h.items || 0,
                  lastInscription: h.lastInscription || 0, synced: h.synced === true,
+                 autoPreserve: h.autoPreserve === true,
                  progress: h.progress !== undefined ? h.progress : -1 }
     }
     function normalizeItem(c) {
@@ -738,6 +739,26 @@ Item {
                                                               ? model.progress + "%" : "…")
                                         color: model.synced ? root.successGreen : root.warningYellow
                                         font.pixelSize: 10
+                                    }
+                                }
+                                ToolButton {
+                                    // #17: preserve new items from this channel unattended
+                                    text: "auto"
+                                    onClicked: {
+                                        var R = root, id = model.channelId, next = !model.autoPreserve
+                                        R.call("setAutoPreserve", [id, next ? "true" : "false"], function(r) {
+                                            if (r && r.ok) R.toast(next ? "Auto-preserve ON — new items download themselves"
+                                                                        : "Auto-preserve off")
+                                        })
+                                    }
+                                    contentItem: Label {
+                                        text: parent.text
+                                        color: model.autoPreserve ? root.successGreen : root.textMuted
+                                        font.pixelSize: 11; font.bold: model.autoPreserve
+                                    }
+                                    background: Rectangle {
+                                        color: "transparent"; radius: 3
+                                        border.color: model.autoPreserve ? root.successGreen : root.borderColor
                                     }
                                 }
                                 ToolButton {

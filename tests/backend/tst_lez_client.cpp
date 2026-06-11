@@ -243,6 +243,39 @@ private slots:
         QCOMPARE(c->itemsJson().size(), 1);
     }
 
+    void scan_emitsItemsDiscovered()
+    {
+        QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 1), "s") };
+        m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
+
+        LezClient* c = makeClient();
+        QSignalSpy disc(c, &LezClient::itemsDiscovered);
+        ScanWaiter waiter(c);
+        c->followChannel(kChannel + "@7000");
+        QVERIFY(waiter.wait(kChannel));
+        QCOMPARE(disc.count(), 1);
+        QCOMPARE(disc.first().at(0).toString(), kChannel);
+        QCOMPARE(disc.first().at(1).toStringList(), QStringList{ "c1" });
+    }
+
+    void autoPreserve_persistsAcrossReload()
+    {
+        LezClient* c = makeClient();
+        ScanWaiter waiter(c);
+        c->followChannel(kChannel + "@7000");
+        QVERIFY(waiter.wait(kChannel));
+        QVERIFY(!c->autoPreserve(kChannel));
+        QVERIFY(c->setAutoPreserve(kChannel, true));
+        QVERIFY(c->autoPreserve(kChannel));
+        QVERIFY(!c->setAutoPreserve("ffff", true));   // unknown channel refused
+
+        // bare construction — makeClient's setGateways saves (empty) state and
+        // would clobber the file before loadState gets to read it
+        auto* c2 = new LezClient(this);
+        QVERIFY(c2->loadState());
+        QVERIFY(c2->autoPreserve(kChannel));
+    }
+
     void scan_diagnosticsCountEverySkip()
     {
         // #11: nothing the scan drops is silent — each skip lands in a counter

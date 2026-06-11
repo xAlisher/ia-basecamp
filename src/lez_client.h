@@ -68,6 +68,7 @@ public:
         QString curator;
         bool    synced = false;    // cursor caught up to lib_slot at last refresh
         qint64  lastLibSlot = 0;   // lib at the most recent scan — drives the progress %
+        bool    autoPreserve = false;   // #17: preserve new items as they appear
         ScanStats lastScan;
         QVector<Item> items;
     };
@@ -106,6 +107,10 @@ public:
     bool refreshChannel(const QString& channelId);   // async scan; false if not followed/busy
     bool isFollowed(const QString& channelId) const { return m_channels.contains(channelId); }
     bool setChannelLabel(const QString& channelId, const QString& label);
+    bool setAutoPreserve(const QString& channelId, bool on);   // #17
+    bool autoPreserve(const QString& channelId) const
+    { return m_channels.value(channelId.toLower()).autoPreserve; }
+    QStringList followedChannelIds() const { return m_channels.keys(); }
 
     QJsonArray channelsJson() const;
     QJsonArray itemsJson(const QString& channelId = QString()) const;
@@ -118,8 +123,10 @@ public:
     bool setItemState(const QString& itemId, const QString& state,
                             qint64 progressBlocks = -1);
 
-    // persistence (one file: gateways, preserveMode, channels+items)
-    void loadState();
+    // persistence (one file: gateways, preserveMode, channels+items).
+    // loadState returns false when no state file existed — a true first run
+    // (the plugin seeds the official campaign channel exactly then, #15)
+    bool loadState();
     void saveState() const;
     static QString stateFilePath();
 
@@ -138,6 +145,8 @@ signals:
     void healthChanged(const QString& state, qint64 lagSlots);
     void channelsChanged();
     void itemsChanged();
+    // genuinely-new items from a scan page — drives auto-preserve (#17)
+    void itemsDiscovered(const QString& channelId, const QStringList& itemIds);
     void scanFinished(const QString& channelId, bool reachedLib);
     void errorOccurred(const QString& code);
 

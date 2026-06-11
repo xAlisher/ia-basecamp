@@ -141,11 +141,56 @@ void ArchivePlugin::initLogos(LogosAPI* api)
         });
     });
 
-    m_lez->loadState();
+    // #17: auto-preserve — eligible new items queue up; the drain respects the
+    // one-preserve-in-flight contract and runs off the existing health tick
+    connect(m_lez, &LezClient::itemsDiscovered, this,
+            [this](const QString& channelId, const QStringList& itemIds) {
+        if (!m_lez->autoPreserve(channelId))
+            return;
+        for (const QJsonValue& v : m_lez->itemsJson(channelId)) {
+            const QJsonObject c = v.toObject();
+            const QString id = c.value(QStringLiteral("id")).toString();
+            if (!itemIds.contains(id))
+                continue;
+            const qint64 size = c.value(QStringLiteral("sizeBytes")).toVariant().toLongLong();
+            if (size > kAutoPreserveMaxBytes) {
+                m_lastError = QStringLiteral("auto-preserve skipped %1 — %2 MB over the cap")
+                                  .arg(id).arg(size / (1024 * 1024));
+                qWarning() << "ArchivePlugin:" << m_lastError;
+                continue;
+            }
+            if (!m_autoQueue.contains(id))
+                m_autoQueue.append(id);
+        }
+        drainAutoQueue();
+    });
+
+    const bool hadState = m_lez->loadState();
+    if (!hadState) {
+        // #15: true first run — pre-follow the official campaign channel (dev
+        // fixture until Logos/IA publish theirs). Unfollow sticks: state exists
+        // after this, so the seed never repeats.
+        const QString seeded = m_lez->followChannel(QStringLiteral("%1@5083600")
+                                   .arg(QLatin1String(kOfficialCampaignChannel)));
+        if (!seeded.isEmpty())
+            m_lez->setChannelLabel(seeded, QStringLiteral("Logos-IA campaign (dev)"));
+    }
 
     m_healthTimer = new QTimer(this);
     connect(m_healthTimer, &QTimer::timeout, this, [this]{ pollGatewayHealth(); });
     m_healthTimer->start(10000);
+
+    // #16: followed channels refresh themselves — refreshChannel no-ops while a
+    // scan is in flight, and an incremental refresh is one page since #10
+    auto* refreshTimer = new QTimer(this);
+    connect(refreshTimer, &QTimer::timeout, this, [this] {
+        if (m_lez->gatewayState() == QLatin1String("offline"))
+            return;
+        const QStringList ids = m_lez->followedChannelIds();
+        for (const QString& id : ids)
+            m_lez->refreshChannel(id);
+    });
+    refreshTimer->start(60000);
     QTimer::singleShot(1500, this, [this]{ pollGatewayHealth(); });
     QTimer::singleShot(0, this, [this] {
         const QString dataDir =
@@ -166,6 +211,26 @@ void ArchivePlugin::pollGatewayHealth()
     // only after the next preserve
     if (m_storage->storageState() == QLatin1String("ready"))
         m_storage->queryRepoStat();
+    drainAutoQueue();   // #17 — retries items queued while storage was busy/offline
+}
+
+void ArchivePlugin::drainAutoQueue()
+{
+    if (!m_iaItemId.isEmpty() || !m_reseedItemId.isEmpty())
+        return;   // one preserve in flight — next drain picks it up
+    if (m_storage->storageState() != QLatin1String("ready"))
+        return;
+    while (!m_autoQueue.isEmpty()) {
+        const QString id = m_autoQueue.takeFirst();
+        if (m_lez->itemState(id) != QLatin1String("available")) {
+            qInfo() << "ArchivePlugin: auto-preserve skipped" << id
+                    << "— already" << m_lez->itemState(id);
+            continue;
+        }
+        qInfo() << "ArchivePlugin: auto-preserving" << id;
+        mirrorItem(id);
+        return;   // one at a time — completion re-drains via the health tick
+    }
 }
 
 // ── status ──────────────────────────────────────────────────────────────────
@@ -261,6 +326,14 @@ QString ArchivePlugin::refreshChannel(const QString& channelId)
 QString ArchivePlugin::getChannels()
 {
     return ok({ { QStringLiteral("channels"), m_lez->channelsJson() } });
+}
+
+QString ArchivePlugin::setAutoPreserve(const QString& channelId, const QString& on)
+{
+    if (!m_lez->setAutoPreserve(channelId, on == QLatin1String("true")))
+        return fail(QStringLiteral("not_followed"));
+    return ok({ { QStringLiteral("channelId"), channelId.toLower() },
+                { QStringLiteral("autoPreserve"), on == QLatin1String("true") } });
 }
 
 QString ArchivePlugin::getScanDiagnostics(const QString& channelId)

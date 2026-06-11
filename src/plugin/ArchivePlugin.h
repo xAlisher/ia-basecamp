@@ -58,6 +58,7 @@ public:
     Q_INVOKABLE QString getChannels();                          // {ok, channels:[...]}
     Q_INVOKABLE QString getScanDiagnostics(const QString& channelId);   // last scan's skip counters (#11)
     Q_INVOKABLE QString setChannelLabel(const QString& channelId, const QString& label);
+    Q_INVOKABLE QString setAutoPreserve(const QString& channelId, const QString& on);   // "true"/"false" (#17)
 
     // ── items + preserve (Logos Storage) ───────────────────────────────
     Q_INVOKABLE QString getItems(const QString& channelId);  // "" = all followed
@@ -116,4 +117,13 @@ private:
     int m_iaIdx = 0;
     int m_iaUnverified = 0;
     QString m_iaTmpPath;
+
+    // #15: dev fixture channel until Logos/IA publish official ids
+    static constexpr const char* kOfficialCampaignChannel =
+        "47945cf8d7eec34043fa93b729de867c1cbec74af9dbe7fbe3ca0c2091dc20ae";
+    // #17: per-item ceiling for unattended preserves; oversize items stay
+    // manual-only and the skip is logged
+    static constexpr qint64 kAutoPreserveMaxBytes = 1024 * 1024 * 1024;   // 1 GiB
+    void drainAutoQueue();
+    QStringList m_autoQueue;   // item ids awaiting their turn (#17)
 };
