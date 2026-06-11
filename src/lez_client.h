@@ -44,6 +44,21 @@ public:
         QString iaFile;      // file within the IA item — empty = whole item
     };
 
+    // Why-was-it-skipped counters for the last scan — every defensive skip in the
+    // read path is counted, never silent (#11). Runtime-only, not persisted.
+    struct ScanStats {
+        qint64 scannedSlots = 0;
+        int    pages = 0;
+        int    matched = 0;
+        int    skippedNotFinalized = 0;   // block past lib_slot
+        int    skippedNonJson = 0;        // our channel, payload not a JSON object
+        int    skippedOversized = 0;      // inscription > kMaxInscriptionBytes
+        int    skippedNoCid = 0;          // manifest without a cid
+        int    skippedDuplicate = 0;      // (txHash,id) already collected
+        int    otherChannelOps = 0;       // inscriptions for channels we don't follow
+        int    oversizedBodies = 0;       // /blocks response > kMaxBlocksBodyBytes
+    };
+
     struct Channel {
         QString channelId;
         QString label;             // user-given name (edit icon in the UI)
@@ -53,7 +68,7 @@ public:
         QString curator;
         bool    synced = false;    // cursor caught up to lib_slot at last refresh
         qint64  lastLibSlot = 0;   // lib at the most recent scan — drives the progress %
-        qint64  generation = 0;    // bumped on follow — stale async callbacks self-discard
+        ScanStats lastScan;
         QVector<Collection> collections;
     };
 
@@ -95,6 +110,7 @@ public:
     QJsonArray channelsJson() const;
     QJsonArray collectionsJson(const QString& channelId = QString()) const;
     QJsonObject summaryJson() const;
+    QJsonObject scanDiagnosticsJson(const QString& channelId) const;   // last scan's skip counters
 
     // mirror bookkeeping (P2 — storage results land back on the collection records)
     QString collectionCid(const QString& collectionId) const;   // empty if unknown
@@ -115,7 +131,8 @@ public:
     static QStringList deriveIaCandidates(const QString& cid, const QString& label);
     static QString parseChannelRef(const QString& ref, qint64* startSlot, QString* errorCode);
     static QVector<Collection> extractCollections(const QJsonArray& blocks,
-                                                  const QString& channelId, qint64 libSlot);
+                                                  const QString& channelId, qint64 libSlot,
+                                                  ScanStats* stats = nullptr);
 
 signals:
     void healthChanged(const QString& state, qint64 lagSlots);
@@ -125,13 +142,17 @@ signals:
     void errorOccurred(const QString& code);
 
 private:
+    // One scan = one context QObject (#11): every connect() targets it and every
+    // reply is parented to it, so deleting the context cancels everything in
+    // flight by object lifetime — no generation counters to re-check per hop.
     void startScan(const QString& channelId);
     // #10: resolve the channel's first-seen slot from the explorer before the first
     // scan — falls through to fetchInfoAndScan unchanged on any failure
-    void resolveScanStart(const QString& channelId, qint64 generation, int gatewayIdx);
-    void fetchInfoAndScan(const QString& channelId, qint64 generation, int gatewayIdx);
-    void scanNextPage(const QString& channelId, qint64 generation, int gatewayIdx,
+    void resolveScanStart(const QString& channelId, QObject* ctx, int gatewayIdx);
+    void fetchInfoAndScan(const QString& channelId, QObject* ctx, int gatewayIdx);
+    void scanNextPage(const QString& channelId, QObject* ctx, int gatewayIdx,
                       qint64 libSlot, int pagesLeft);
+    void endScan(const QString& channelId, QObject* ctx);
     // gatewayIdx -1 = current active; scans pin their gateway so one consistent
     // finalized view drives the whole pagination
     QNetworkReply* httpGet(const QString& path, const QString& query = QString(),
@@ -151,9 +172,7 @@ private:
     qint64 m_syncLag = 0;
 
     QMap<QString, Channel> m_channels;
-    QMap<QString, qint64> m_scanning;   // channelId → generation that owns the in-flight scan
-    qint64 m_generationCounter = 0;
-    int m_degradedRotations = 0;        // stop churning once every gateway proved degraded
+    QMap<QString, QObject*> m_scanning;   // channelId → context owning the in-flight scan
 };
 
 #endif // LEZ_CLIENT_H

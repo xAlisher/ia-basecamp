@@ -243,6 +243,32 @@ private slots:
         QCOMPARE(c->collectionsJson().size(), 1);
     }
 
+    void scan_diagnosticsCountEverySkip()
+    {
+        // #11: nothing the scan drops is silent — each skip lands in a counter
+        QJsonArray ops;
+        ops.append(inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 42), "sig"));
+        ops.append(inscribeOp(kOtherChannel, manifest("cx", "Other", "cid-x", 1), "sx"));
+        ops.append(inscribeOp(kChannel, QByteArray("\x01\x02\x03binary"), "sig"));
+        m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
+
+        LezClient* c = makeClient();
+        ScanWaiter waiter(c);
+        c->followChannel(kChannel + "@7000");
+        QVERIFY(waiter.wait(kChannel));
+
+        const QJsonObject d = c->scanDiagnosticsJson(kChannel);
+        QCOMPARE(d.value("known").toBool(), true);
+        QCOMPARE(d.value("matched").toInt(), 1);
+        QCOMPARE(d.value("skippedNonJson").toInt(), 1);
+        QCOMPARE(d.value("otherChannelOps").toInt(), 1);
+        QCOMPARE(d.value("skippedDuplicate").toInt(), 0);
+        QCOMPARE(d.value("scannedSlots").toVariant().toLongLong(), qint64(3001));
+        QCOMPARE(d.value("pages").toInt(), 2);
+
+        QCOMPARE(c->scanDiagnosticsJson("ffff").value("known").toBool(), false);
+    }
+
     void extract_finalizedOnly()
     {
         QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "T", "cid-1", 1), "s") };
@@ -519,9 +545,11 @@ private slots:
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
     }
 
-    void failover_rotatesOnLag()
+    void health_lagSurfacedNotRotated()
     {
-        // P4: a lagging gateway is demoted like a dead one
+        // #11: a lagging gateway is SURFACED as degraded, no longer rotated away
+        // from — the demote-and-rotate state machine was deleted (dead gateways
+        // still rotate via failOver, covered by failover_rotatesGateway)
         MockNode laggy;
         QVERIFY(laggy.start());
         laggy.info = QJsonObject{ { "slot", 50000 }, { "lib_slot", 10000 },   // lag 40k
@@ -534,12 +562,7 @@ private slots:
         c->pollHealth();
         QVERIFY(spy.wait(3000));
         QCOMPARE(spy.last().at(0).toString(), QStringLiteral("degraded"));
-        QCOMPARE(c->activeGateway(), 1);   // demoted
-
-        c->pollHealth();                   // healthy gateway takes over
-        QVERIFY(spy.wait(3000));
-        QCOMPARE(spy.last().at(0).toString(), QStringLiteral("ready"));
-        QCOMPARE(spy.last().at(1).toLongLong(), qint64(500));
+        QCOMPARE(c->activeGateway(), 0);   // stays put — degraded is a pill, not a demotion
     }
 
     void scanFailover_cursorSurvivesGatewayDeath()

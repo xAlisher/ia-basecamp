@@ -55,6 +55,7 @@ public:
     Q_INVOKABLE QString unfollowChannel(const QString& channelId);
     Q_INVOKABLE QString refreshChannel(const QString& channelId);
     Q_INVOKABLE QString getChannels();                          // {ok, channels:[...]}
+    Q_INVOKABLE QString getScanDiagnostics(const QString& channelId);   // last scan's skip counters (#11)
     Q_INVOKABLE QString setChannelLabel(const QString& channelId, const QString& label);
 
     // ── collections + preserve (Logos Storage) ───────────────────────────────

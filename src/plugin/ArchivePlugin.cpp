@@ -247,6 +247,14 @@ QString ArchivePlugin::getChannels()
     return ok({ { QStringLiteral("channels"), m_lez->channelsJson() } });
 }
 
+QString ArchivePlugin::getScanDiagnostics(const QString& channelId)
+{
+    const QJsonObject diag = m_lez->scanDiagnosticsJson(channelId);
+    if (!diag.value(QStringLiteral("known")).toBool())
+        return fail(QStringLiteral("not_followed"));
+    return ok({ { QStringLiteral("diagnostics"), diag } });
+}
+
 QString ArchivePlugin::setChannelLabel(const QString& channelId, const QString& label)
 {
     if (!m_lez->setChannelLabel(channelId, label))

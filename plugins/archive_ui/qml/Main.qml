@@ -32,8 +32,51 @@ Item {
     property string storageState: "offline"
     property string preserveMode: "local"
     property string activeGatewayUrl: ""
-    property var channels: []
-    property var collections: []
+    // channels/collections live in ListModels (not JS arrays): in-place role updates
+    // keep delegate identity stable, so the viewport never jumps on poll/Preserve (#12)
+    ListModel { id: channelsModel }
+    ListModel { id: collectionsModel }
+
+    // every role always present with a stable type — ListModel locks roles on first
+    // append, and absent-vs-undefined mismatches corrupt later setProperty calls
+    function normalizeChannel(h) {
+        return { channelId: h.channelId || "", name: h.name || "",
+                 curator: h.curator || "", collections: h.collections || 0,
+                 lastInscription: h.lastInscription || 0, synced: h.synced === true,
+                 progress: h.progress !== undefined ? h.progress : -1 }
+    }
+    function normalizeCollection(c) {
+        return { id: c.id || "", title: c.title || "", channelId: c.channelId || "",
+                 cid: c.cid || "", sizeBytes: c.sizeBytes || 0, items: c.items || 0,
+                 thumbnail: c.thumbnail || "", inscribedAt: c.inscribedAt || 0,
+                 txHash: c.txHash || "", blockHash: c.blockHash || "",
+                 txIndex: c.txIndex !== undefined ? c.txIndex : -1,
+                 curator: c.curator || "", state: c.state || "available",
+                 progressBlocks: c.progressBlocks || 0,
+                 iaId: c.iaId || "", iaFile: c.iaFile || "" }
+    }
+
+    // diff rows (already normalized) into the model by key: changed roles updated
+    // in place, new rows appended, vanished rows removed — never a full rebuild
+    function syncListModel(model, rows, key) {
+        var have = {}
+        for (var i = 0; i < model.count; i++) have[model.get(i)[key]] = i
+        var seen = {}
+        for (var r = 0; r < rows.length; r++) {
+            var row = rows[r]
+            seen[row[key]] = true
+            var idx = have[row[key]]
+            if (idx === undefined) {
+                model.append(row)
+            } else {
+                var cur = model.get(idx)
+                for (var role in row)
+                    if (cur[role] !== row[role]) model.setProperty(idx, role, row[role])
+            }
+        }
+        for (var j = model.count - 1; j >= 0; j--)
+            if (!seen[model.get(j)[key]]) model.remove(j)
+    }
     property var summary: ({})
     property bool settingsOpen: false
 
@@ -115,12 +158,11 @@ Item {
                             var h = chNew[hi]
                             var prevSync = root._prevChannelSynced[h.channelId]
                             if (prevSync === false && h.synced === true)
-                                logEvent("mirror", "Channel " + h.name + " fully synced")
+                                logEvent("mirror", "Channel " + h.name + " fully synced"
+                                         + root.scanSummary(h.channelId))
                             root._prevChannelSynced[h.channelId] = h.synced
                         }
-                        // reassigning resets the ListView (scroll jumps) — only on change
-                        if (JSON.stringify(chNew) !== JSON.stringify(root.channels))
-                            root.channels = chNew
+                        syncListModel(channelsModel, chNew.map(normalizeChannel), "channelId")
                     }
                 } catch (e1) {}
                 try {
@@ -145,8 +187,7 @@ Item {
                             }
                             root._prevCollectionStates[c.id] = c.state
                         }
-                        if (JSON.stringify(coNew) !== JSON.stringify(root.collections))
-                            root.collections = coNew
+                        syncListModel(collectionsModel, coNew.map(normalizeCollection), "id")
                     }
                 } catch (e2) {}
             } else {
@@ -166,16 +207,12 @@ Item {
     // optimistic UI: flip a collection's state locally the instant the user acts;
     // the next poll reconciles with the backend's truth
     function flipCollectionState(collectionId, newState) {
-        var copy = root.collections.slice()
-        for (var i = 0; i < copy.length; i++) {
-            if (copy[i].id === collectionId) {
-                var row = JSON.parse(JSON.stringify(copy[i]))
-                row.state = newState
-                copy[i] = row
+        for (var i = 0; i < collectionsModel.count; i++) {
+            if (collectionsModel.get(i).id === collectionId) {
+                collectionsModel.setProperty(i, "state", newState)
                 break
             }
         }
-        root.collections = copy
     }
 
     function gb(bytes) { return (bytes / 1e9).toFixed(bytes > 0 && bytes < 1e8 ? 2 : 1) }
@@ -199,6 +236,23 @@ Item {
 
     // ── Activity log ─────────────────────────────────────────────────────────
     ListModel { id: activityModel }
+    // one honest line per finished scan: what matched and why things were skipped (#11)
+    function scanSummary(channelId) {
+        var r = safeParse(logos.callModule("archive", "getScanDiagnostics", [channelId]), null)
+        if (!r || !r.ok || !r.diagnostics) return ""
+        var d = r.diagnostics
+        var skips = []
+        if (d.skippedNonJson)       skips.push(d.skippedNonJson + " non-json")
+        if (d.skippedNoCid)         skips.push(d.skippedNoCid + " no-cid")
+        if (d.skippedOversized)     skips.push(d.skippedOversized + " oversized")
+        if (d.skippedDuplicate)     skips.push(d.skippedDuplicate + " duplicate")
+        if (d.skippedNotFinalized)  skips.push(d.skippedNotFinalized + " not-finalized")
+        if (d.oversizedBodies)      skips.push(d.oversizedBodies + " oversized-body")
+        return " — scanned " + (d.scannedSlots >= 1000
+                                ? Math.round(d.scannedSlots / 1000) + "k" : d.scannedSlots)
+               + " slots: " + d.matched + " matched"
+               + (skips.length ? ", skipped " + skips.join(", ") : "")
+    }
     function logEvent(kind, text) {
         activityModel.append({ kind: kind, text: text,
                                ts: Qt.formatDateTime(new Date(), "hh:mm:ss") })
@@ -617,7 +671,7 @@ Item {
                 }
                 ListView {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    model: root.channels
+                    model: channelsModel
                     clip: true
                     spacing: 6
                     delegate: Rectangle {
@@ -634,7 +688,7 @@ Item {
                                     spacing: 6
                                     Label {
                                         visible: !labelEdit.visible
-                                        text: modelData.name || root.shortId(modelData.channelId) || "channel"
+                                        text: model.name || root.shortId(model.channelId) || "channel"
                                         color: root.textPrimary; font.pixelSize: 13; font.bold: true
                                     }
                                     DarkField {
@@ -643,7 +697,7 @@ Item {
                                         implicitWidth: 180
                                         font.pixelSize: 12
                                         onAccepted: {
-                                            var R = root, id = modelData.channelId, t = text
+                                            var R = root, id = model.channelId, t = text
                                             visible = false
                                             R.call("setChannelLabel", [id, t], function(r) {
                                                 if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
@@ -655,7 +709,7 @@ Item {
                                         text: "✎"   // label this channel
                                         visible: !labelEdit.visible
                                         onClicked: {
-                                            labelEdit.text = modelData.label || ""
+                                            labelEdit.text = model.label || ""
                                             labelEdit.visible = true
                                             labelEdit.forceActiveFocus()
                                         }
@@ -664,8 +718,8 @@ Item {
                                     }
                                 }
                                 Label {
-                                    text: (modelData.curator ? "curator " + root.shortId(modelData.curator) + " · " : "")
-                                          + (modelData.collections || 0) + " collections"
+                                    text: (model.curator ? "curator " + root.shortId(model.curator) + " · " : "")
+                                          + (model.collections || 0) + " collections"
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                             }
@@ -676,21 +730,21 @@ Item {
                                 Layout.alignment: Qt.AlignVCenter
                                 Rectangle {
                                     implicitWidth: syncLbl.implicitWidth + 12; implicitHeight: 20; radius: 10
-                                    color: "transparent"; border.color: modelData.synced ? root.successGreen : root.warningYellow
+                                    color: "transparent"; border.color: model.synced ? root.successGreen : root.warningYellow
                                     Label {
                                         id: syncLbl; anchors.centerIn: parent
-                                        text: modelData.synced ? "synced"
-                                              : "syncing " + (modelData.progress !== undefined
-                                                              ? modelData.progress + "%" : "…")
-                                        color: modelData.synced ? root.successGreen : root.warningYellow
+                                        text: model.synced ? "synced"
+                                              : "syncing " + (model.progress >= 0
+                                                              ? model.progress + "%" : "…")
+                                        color: model.synced ? root.successGreen : root.warningYellow
                                         font.pixelSize: 10
                                     }
                                 }
                                 ToolButton {
                                     text: "↻"
-                                    enabled: !!modelData.channelId
+                                    enabled: !!model.channelId
                                     onClicked: {
-                                        var R = root, id = modelData.channelId
+                                        var R = root, id = model.channelId
                                         R.call("refreshChannel", [id], function(r) {
                                             if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id))
                                         })
@@ -700,9 +754,9 @@ Item {
                                 }
                                 ToolButton {
                                     text: "✕"
-                                    enabled: !!modelData.channelId
+                                    enabled: !!model.channelId
                                     onClicked: {
-                                        var R = root, id = modelData.channelId
+                                        var R = root, id = model.channelId
                                         R.call("unfollowChannel", [id], function(r) {
                                             if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id))
                                         })
@@ -714,7 +768,7 @@ Item {
                         }
                     }
                     Label {
-                        visible: root.channels.length === 0
+                        visible: channelsModel.count === 0
                         anchors.centerIn: parent
                         text: "Follow a curated channel to see its collections.\nReads need a synced gateway (LEZ#519)."
                         color: root.textMuted; font.pixelSize: 12
@@ -746,7 +800,7 @@ Item {
                 }
                 ListView {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    model: root.collections
+                    model: collectionsModel
                     clip: true
                     spacing: 6
                     delegate: Rectangle {
@@ -762,36 +816,36 @@ Item {
                                 spacing: 8
                                 Label {
                                     Layout.fillWidth: true
-                                    text: modelData.iaId || modelData.title || modelData.cid || "untitled"
+                                    text: model.iaId || model.title || model.cid || "untitled"
                                     color: root.textPrimary; font.pixelSize: 13; font.bold: true
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
                                     implicitWidth: stLbl.implicitWidth + 12; implicitHeight: 20; radius: 10
-                                    color: "transparent"; border.color: root.mirrorColor(modelData.state)
+                                    color: "transparent"; border.color: root.mirrorColor(model.state)
                                     Label {
                                         id: stLbl; anchors.centerIn: parent
-                                        text: (modelData.state || "available")
-                                              + (modelData.state === "mirroring" && modelData.progressBlocks > 0
-                                                 ? " " + modelData.progressBlocks + "%" : "")
-                                        color: root.mirrorColor(modelData.state); font.pixelSize: 10
+                                        text: (model.state || "available")
+                                              + (model.state === "mirroring" && model.progressBlocks > 0
+                                                 ? " " + model.progressBlocks + "%" : "")
+                                        color: root.mirrorColor(model.state); font.pixelSize: 10
                                     }
                                 }
                                 DarkButton {
                                     text: "Copy IA link"
-                                    enabled: !!modelData.iaId
+                                    enabled: !!model.iaId
                                     onClicked: {
-                                        root.copyText("https://archive.org/details/" + modelData.iaId)
+                                        root.copyText("https://archive.org/details/" + model.iaId)
                                         root.toast("Internet Archive link copied")
                                     }
                                 }
                                 AccentButton {
-                                    visible: modelData.state !== "mirrored"
+                                    visible: model.state !== "mirrored"
                                     text: "Preserve"
-                                    enabled: modelData.state !== "mirroring" && !!modelData.id
+                                    enabled: model.state !== "mirroring" && !!model.id
                                              && root.storageState === "ready"
                                     onClicked: {
-                                        var R = root, t = modelData.iaId || modelData.title, id = modelData.id
+                                        var R = root, t = model.iaId || model.title, id = model.id
                                         R.flipCollectionState(id, "mirroring")   // instant feedback
                                         R.toast("Preserving " + t + "…")
                                         R.call("mirrorCollection", [id], function(r) {
@@ -804,13 +858,13 @@ Item {
                                     }
                                 }
                                 DarkButton {
-                                    visible: modelData.state === "mirrored"
+                                    visible: model.state === "mirrored"
                                     text: "Remove"
                                     Layout.preferredWidth: 84   // same footprint as Preserve
-                                    enabled: !!modelData.id && root.storageState === "ready"
+                                    enabled: !!model.id && root.storageState === "ready"
                                     onClicked: {
-                                        var R = root, t = modelData.iaId || modelData.title
-                                        R.call("unmirrorCollection", [modelData.id], function(r) {
+                                        var R = root, t = model.iaId || model.title
+                                        R.call("unmirrorCollection", [model.id], function(r) {
                                             if (r && r.ok) { R.logEvent("mirror", "Unpreserving " + t); R.toast("Unpreserved " + t) }
                                             else R.toast("Unpreserve failed: " + (r ? r.error : "no response"))
                                         })
@@ -821,24 +875,25 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
                                 Label {
-                                    visible: !!modelData.iaFile
-                                    text: modelData.iaFile || ""
+                                    visible: !!model.iaFile
+                                    text: model.iaFile || ""
                                     color: root.textSecondary; font.pixelSize: 11
                                     elide: Text.ElideMiddle
                                     Layout.maximumWidth: 220
                                 }
                                 ToolButton {
-                                    text: "tx " + root.shortId(modelData.txHash)
-                                    enabled: !!modelData.txHash
+                                    text: "tx " + root.shortId(model.txHash)
+                                    enabled: !!model.txHash
                                     onClicked: {
                                         var R = root
                                         // the backend resolves the explorer's own tx hash
                                         // (node hash is a dead link there) — copy what it
                                         // actually opened, block page as the fallback
-                                        var fallback = R.explorerUrl(modelData)
+                                        var fallback = R.explorerUrl({ blockHash: model.blockHash,
+                                                                       txHash: model.txHash })
                                         R.call("openExplorerTx",
-                                               [modelData.txHash, modelData.blockHash || "",
-                                                modelData.txIndex !== undefined ? modelData.txIndex : -1],
+                                               [model.txHash, model.blockHash || "",
+                                                model.txIndex !== undefined ? model.txIndex : -1],
                                                function(r) {
                                             R.copyText(r && r.url ? r.url : fallback)
                                             R.toast(r && r.ok ? "Opening in explorer (link copied too)"
@@ -849,11 +904,11 @@ Item {
                                     background: Rectangle { color: "transparent" }
                                 }
                                 Label {
-                                    text: "slot " + (modelData.inscribedAt || "?")
+                                    text: "slot " + (model.inscribedAt || "?")
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                                 Label {
-                                    text: "CID " + root.shortId(modelData.cid)
+                                    text: "CID " + root.shortId(model.cid)
                                     color: root.textMuted; font.pixelSize: 11
                                 }
                                 Item { Layout.fillWidth: true }
@@ -861,7 +916,7 @@ Item {
                         }
                     }
                     Label {
-                        visible: root.collections.length === 0
+                        visible: collectionsModel.count === 0
                         anchors.centerIn: parent
                         text: "No collections yet — follow a channel first."
                         color: root.textMuted; font.pixelSize: 12

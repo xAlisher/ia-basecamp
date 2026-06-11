@@ -109,14 +109,9 @@ void LezClient::pollHealth()
                              && m_syncLag < kLagDegradedThreshold;
         m_gatewayState = healthy ? QStringLiteral("ready") : QStringLiteral("degraded");
         emit healthChanged(m_gatewayState, m_syncLag);
-        // federation: a lagging gateway is demoted like a dead one — but once a full
-        // rotation proved every gateway degraded, stay put instead of churning forever
-        if (healthy) {
-            m_degradedRotations = 0;
-        } else if (m_gateways.size() > 1 && m_degradedRotations < m_gateways.size()) {
-            m_active = (m_active + 1) % m_gateways.size();
-            ++m_degradedRotations;
-        }
+        // a degraded (lagging) gateway is surfaced, not rotated away from: with one
+        // real gateway the old demote-and-rotate state machine was pure debugging
+        // surface (#11) — dead gateways still fail over in failOver()
     });
 }
 
@@ -144,15 +139,23 @@ QString LezClient::parseChannelRef(const QString& ref, qint64* startSlot, QStrin
 
 QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& blocks,
                                                              const QString& channelId,
-                                                             qint64 libSlot)
+                                                             qint64 libSlot,
+                                                             ScanStats* stats)
 {
+    // every skip below is counted in *stats — a defensive skip that fails
+    // silently costs more debugging time than it saves (#11)
+    ScanStats local;
+    ScanStats& st = stats ? *stats : local;
+
     QVector<Collection> out;
     for (const QJsonValue& bv : blocks) {
         const QJsonObject block = bv.toObject();
         const QJsonObject header = block.value(QLatin1String("header")).toObject();
         const qint64 slot = header.value(QLatin1String("slot")).toVariant().toLongLong();
-        if (slot > libSlot)
+        if (slot > libSlot) {
+            st.skippedNotFinalized++;
             continue;   // finalized data only — never surface pre-LIB inscriptions
+        }
         const QString blockHash = jsonStr(header, "id");
 
         const QJsonArray txs = block.value(QLatin1String("transactions")).toArray();
@@ -168,25 +171,33 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
                 if (op.value(QLatin1String("opcode")).toInt() != kChannelInscribeOpcode)
                     continue;
                 const QJsonObject payload = op.value(QLatin1String("payload")).toObject();
-                if (jsonStr(payload, "channel_id").toLower() != channelId)
+                if (jsonStr(payload, "channel_id").toLower() != channelId) {
+                    st.otherChannelOps++;
                     continue;
+                }
 
                 // inscription = byte array → UTF-8 JSON manifest (non-JSON payloads are
                 // some other producer's data on this channel — skip, don't fail the scan)
                 const QJsonArray arr = payload.value(QLatin1String("inscription")).toArray();
-                if (arr.size() > kMaxInscriptionBytes)
+                if (arr.size() > kMaxInscriptionBytes) {
+                    st.skippedOversized++;
                     continue;   // no legitimate manifest is this big — refuse the allocation
+                }
                 QByteArray bytes;
                 bytes.reserve(arr.size());
                 for (const QJsonValue& byte : arr)
                     bytes.append(static_cast<char>(byte.toInt()));
                 const QJsonDocument doc = QJsonDocument::fromJson(bytes);
-                if (!doc.isObject())
+                if (!doc.isObject()) {
+                    st.skippedNonJson++;
                     continue;
+                }
                 const QJsonObject man = doc.object();
                 const QString cid = jsonStr(man, "cid");
-                if (cid.isEmpty())
+                if (cid.isEmpty()) {
+                    st.skippedNoCid++;
                     continue;   // a collection without content is not preservable
+                }
 
                 Collection c;
                 c.channelId = channelId;
@@ -206,6 +217,7 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
                 c.thumbnail = jsonStr(man, "thumbnail");
                 c.state = QStringLiteral("available");
                 deriveIaRef(c.cid, jsonStr(man, "label"), &c.iaId, &c.iaFile);
+                st.matched++;
                 out.append(c);
             }
         }
@@ -298,7 +310,6 @@ QString LezClient::followChannel(const QString& ref, QString* errorCode)
     Channel ch;
     ch.channelId = channelId;
     ch.startSlot = startSlot;
-    ch.generation = ++m_generationCounter;
     m_channels.insert(channelId, ch);
     saveState();
     emit channelsChanged();
@@ -322,7 +333,8 @@ bool LezClient::unfollowChannel(const QString& channelId)
     const QString id = channelId.toLower();
     if (m_channels.remove(id) == 0)
         return false;
-    m_scanning.remove(id);   // orphan any in-flight scan; its callbacks self-discard
+    delete m_scanning.take(id);   // kills the scan context → aborts in-flight replies,
+                                  // disconnects every pending callback (#11)
     saveState();
     emit channelsChanged();
     emit collectionsChanged();
@@ -342,8 +354,11 @@ void LezClient::startScan(const QString& channelId)
 {
     if (m_scanning.contains(channelId))
         return;
-    const qint64 generation = m_channels.value(channelId).generation;
-    m_scanning.insert(channelId, generation);
+    // the context object IS the scan's lifetime: every callback targets it and
+    // every reply is parented to it — deleting it cancels the scan wholesale
+    auto* ctx = new QObject(this);
+    m_scanning.insert(channelId, ctx);
+    m_channels[channelId].lastScan = ScanStats{};
 
     // pin the whole scan to one gateway: lib_slot and every page must come from the
     // same finalized view, or cursor advancement could silently skip inscriptions
@@ -353,20 +368,24 @@ void LezClient::startScan(const QString& channelId)
     // ask the explorer where the channel actually starts first
     const Channel& ch = m_channels.value(channelId);
     if (ch.startSlot == 0 && ch.cursor == 0 && !m_explorerBase.isEmpty())
-        resolveScanStart(channelId, generation, gatewayIdx);
+        resolveScanStart(channelId, ctx, gatewayIdx);
     else
-        fetchInfoAndScan(channelId, generation, gatewayIdx);
+        fetchInfoAndScan(channelId, ctx, gatewayIdx);
 }
 
-void LezClient::resolveScanStart(const QString& channelId, qint64 generation, int gatewayIdx)
+void LezClient::endScan(const QString& channelId, QObject* ctx)
+{
+    m_scanning.remove(channelId);
+    ctx->deleteLater();   // we may be inside a signal of a ctx-owned reply
+}
+
+void LezClient::resolveScanStart(const QString& channelId, QObject* ctx, int gatewayIdx)
 {
     QNetworkReply* chReply = httpGetUrl(
         QUrl(m_explorerBase + QStringLiteral("/api/channel/") + channelId));
-    connect(chReply, &QNetworkReply::finished, this,
-            [this, chReply, channelId, generation, gatewayIdx] {
+    chReply->setParent(ctx);
+    connect(chReply, &QNetworkReply::finished, ctx, [this, chReply, channelId, ctx, gatewayIdx] {
         chReply->deleteLater();
-        if (m_scanning.value(channelId, -1) != generation)
-            return;
         QString firstBlock;
         if (chReply->error() == QNetworkReply::NoError) {
             const QJsonObject info = QJsonDocument::fromJson(chReply->readAll()).object();
@@ -377,16 +396,14 @@ void LezClient::resolveScanStart(const QString& channelId, qint64 generation, in
                 firstBlock.clear();
         }
         if (firstBlock.isEmpty()) {   // explorer down or channel unknown — scan as before
-            fetchInfoAndScan(channelId, generation, gatewayIdx);
+            fetchInfoAndScan(channelId, ctx, gatewayIdx);
             return;
         }
         QNetworkReply* bReply = httpGetUrl(
             QUrl(m_explorerBase + QStringLiteral("/api/blocks/") + firstBlock));
-        connect(bReply, &QNetworkReply::finished, this,
-                [this, bReply, channelId, generation, gatewayIdx] {
+        bReply->setParent(ctx);
+        connect(bReply, &QNetworkReply::finished, ctx, [this, bReply, channelId, ctx, gatewayIdx] {
             bReply->deleteLater();
-            if (m_scanning.value(channelId, -1) != generation)
-                return;
             if (bReply->error() == QNetworkReply::NoError) {
                 const QJsonObject blk = QJsonDocument::fromJson(bReply->readAll()).object();
                 const qint64 slot = blk.value(QLatin1String("slot")).toVariant().toLongLong();
@@ -395,21 +412,19 @@ void LezClient::resolveScanStart(const QString& channelId, qint64 generation, in
                     saveState();
                 }
             }
-            fetchInfoAndScan(channelId, generation, gatewayIdx);
+            fetchInfoAndScan(channelId, ctx, gatewayIdx);
         });
     });
 }
 
-void LezClient::fetchInfoAndScan(const QString& channelId, qint64 generation, int gatewayIdx)
+void LezClient::fetchInfoAndScan(const QString& channelId, QObject* ctx, int gatewayIdx)
 {
     QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/info"), QString(), gatewayIdx);
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, channelId, generation, gatewayIdx] {
+    reply->setParent(ctx);
+    connect(reply, &QNetworkReply::finished, ctx, [this, reply, channelId, ctx, gatewayIdx] {
         reply->deleteLater();
-        if (m_scanning.value(channelId, -1) != generation)
-            return;   // unfollowed (or re-followed) while in flight — not ours anymore
         if (reply->error() != QNetworkReply::NoError) {
-            m_scanning.remove(channelId);
+            endScan(channelId, ctx);
             failOver(QStringLiteral("gateway_unreachable"));
             emit scanFinished(channelId, false);
             return;
@@ -417,27 +432,25 @@ void LezClient::fetchInfoAndScan(const QString& channelId, qint64 generation, in
         const QJsonObject info = QJsonDocument::fromJson(reply->readAll()).object();
         const qint64 libSlot = info.value(QLatin1String("lib_slot")).toVariant().toLongLong();
         if (libSlot <= 0) {
-            m_scanning.remove(channelId);
+            endScan(channelId, ctx);
             failOver(QStringLiteral("gateway_bad_response"));
             emit scanFinished(channelId, false);
             return;
         }
-        scanNextPage(channelId, generation, gatewayIdx, libSlot, kMaxPagesPerRefresh);
+        scanNextPage(channelId, ctx, gatewayIdx, libSlot, kMaxPagesPerRefresh);
     });
 }
 
-void LezClient::scanNextPage(const QString& channelId, qint64 generation, int gatewayIdx,
+void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gatewayIdx,
                              qint64 libSlot, int pagesLeft)
 {
-    if (m_scanning.value(channelId, -1) != generation)
-        return;
     Q_ASSERT(m_channels.contains(channelId));
     Channel& ch = m_channels[channelId];
     ch.lastLibSlot = libSlot;
     const qint64 from = ch.cursor > 0 ? ch.cursor + 1 : ch.startSlot;
     if (from > libSlot || pagesLeft <= 0) {
         ch.synced = (from > libSlot);
-        m_scanning.remove(channelId);
+        endScan(channelId, ctx);
         saveState();
         emit channelsChanged();
         emit scanFinished(channelId, ch.synced);
@@ -449,13 +462,12 @@ void LezClient::scanNextPage(const QString& channelId, qint64 generation, int ga
     q.addQueryItem(QStringLiteral("slot_from"), QString::number(from));
     q.addQueryItem(QStringLiteral("slot_to"), QString::number(to));
     QNetworkReply* reply = httpGet(QStringLiteral("/cryptarchia/blocks"), q.toString(), gatewayIdx);
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, channelId, generation, gatewayIdx, libSlot, pagesLeft, to] {
+    reply->setParent(ctx);
+    connect(reply, &QNetworkReply::finished, ctx,
+            [this, reply, channelId, ctx, gatewayIdx, libSlot, pagesLeft, from, to] {
         reply->deleteLater();
-        if (m_scanning.value(channelId, -1) != generation)
-            return;
         if (reply->error() != QNetworkReply::NoError) {
-            m_scanning.remove(channelId);
+            endScan(channelId, ctx);
             saveState();   // keep the cursor we reached
             failOver(QStringLiteral("gateway_unreachable"));
             emit scanFinished(channelId, false);
@@ -463,14 +475,17 @@ void LezClient::scanNextPage(const QString& channelId, qint64 generation, int ga
         }
         const QByteArray body = reply->readAll();
         if (body.size() > kMaxBlocksBodyBytes) {
-            m_scanning.remove(channelId);
+            m_channels[channelId].lastScan.oversizedBodies++;
+            endScan(channelId, ctx);
             saveState();
             failOver(QStringLiteral("gateway_bad_response"));
             emit scanFinished(channelId, false);
             return;
         }
         const QJsonArray blocks = QJsonDocument::fromJson(body).array();
-        const QVector<Collection> found = extractCollections(blocks, channelId, libSlot);
+        ScanStats pageStats;
+        const QVector<Collection> found = extractCollections(blocks, channelId, libSlot,
+                                                             &pageStats);
 
         // reacquire after the parse — never hold the reference across anything async
         Channel& ch = m_channels[channelId];
@@ -478,17 +493,32 @@ void LezClient::scanNextPage(const QString& channelId, qint64 generation, int ga
         for (const Collection& c : found) {
             const bool dup = std::any_of(ch.collections.cbegin(), ch.collections.cend(),
                                          [&c](const Collection& e) { return e.txHash == c.txHash && e.id == c.id; });
-            if (dup)
+            if (dup) {
+                pageStats.skippedDuplicate++;
+                pageStats.matched--;
                 continue;
+            }
             ch.collections.append(c);
             ch.lastInscription = qMax(ch.lastInscription, c.inscribedAtSlot);
             ch.curator = c.curator;
             added = true;
         }
         ch.cursor = to;
+
+        ScanStats& total = ch.lastScan;
+        total.scannedSlots += to - from + 1;
+        total.pages++;
+        total.matched += pageStats.matched;
+        total.skippedNotFinalized += pageStats.skippedNotFinalized;
+        total.skippedNonJson += pageStats.skippedNonJson;
+        total.skippedOversized += pageStats.skippedOversized;
+        total.skippedNoCid += pageStats.skippedNoCid;
+        total.skippedDuplicate += pageStats.skippedDuplicate;
+        total.otherChannelOps += pageStats.otherChannelOps;
+
         if (added)
             emit collectionsChanged();
-        scanNextPage(channelId, generation, gatewayIdx, libSlot, pagesLeft - 1);
+        scanNextPage(channelId, ctx, gatewayIdx, libSlot, pagesLeft - 1);
     });
 }
 
@@ -513,6 +543,27 @@ QJsonArray LezClient::channelsJson() const
         arr.append(row);
     }
     return arr;
+}
+
+QJsonObject LezClient::scanDiagnosticsJson(const QString& channelId) const
+{
+    const QString id = channelId.toLower();
+    if (!m_channels.contains(id))
+        return QJsonObject{ { QStringLiteral("known"), false } };
+    const ScanStats& s = m_channels.value(id).lastScan;
+    return QJsonObject{
+        { QStringLiteral("known"), true },
+        { QStringLiteral("scannedSlots"), s.scannedSlots },
+        { QStringLiteral("pages"), s.pages },
+        { QStringLiteral("matched"), s.matched },
+        { QStringLiteral("skippedNotFinalized"), s.skippedNotFinalized },
+        { QStringLiteral("skippedNonJson"), s.skippedNonJson },
+        { QStringLiteral("skippedOversized"), s.skippedOversized },
+        { QStringLiteral("skippedNoCid"), s.skippedNoCid },
+        { QStringLiteral("skippedDuplicate"), s.skippedDuplicate },
+        { QStringLiteral("otherChannelOps"), s.otherChannelOps },
+        { QStringLiteral("oversizedBodies"), s.oversizedBodies },
+    };
 }
 
 QJsonArray LezClient::collectionsJson(const QString& channelId) const
