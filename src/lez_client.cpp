@@ -194,29 +194,46 @@ QVector<LezClient::Item> LezClient::extractItems(const QJsonArray& blocks,
                 }
                 const QJsonObject man = doc.object();
                 const QString cid = jsonStr(man, "cid");
-                if (cid.isEmpty()) {
+                const bool iaEntry = jsonStr(man, "type") == QLatin1String("ia_item");
+                if (cid.isEmpty() && !iaEntry) {
                     st.skippedNoCid++;
-                    continue;   // a item without content is not preservable
+                    continue;   // an item without content is not preservable
                 }
 
                 Item c;
                 c.channelId = channelId;
-                c.cid = cid;
                 c.txHash = txHash;
                 c.blockHash = blockHash;
                 c.txIndex = txIdx;
                 c.curator = jsonStr(payload, "signer");
                 c.inscribedAtSlot = slot;
-                c.id = jsonStr(man, "id").isEmpty() ? txHash : jsonStr(man, "id");
-                // live channels carry "label" (cid_pin convention) rather than "title"
-                c.title = !jsonStr(man, "title").isEmpty() ? jsonStr(man, "title")
-                          : !jsonStr(man, "label").isEmpty() ? jsonStr(man, "label").left(120)
-                                                             : cid;
-                c.sizeBytes = man.value(QLatin1String("sizeBytes")).toVariant().toLongLong();
-                c.items = man.value(QLatin1String("items")).toVariant().toLongLong();
-                c.thumbnail = jsonStr(man, "thumbnail");
                 c.state = QStringLiteral("available");
-                deriveIaRef(c.cid, jsonStr(man, "label"), &c.iaId, &c.iaFile);
+
+                if (iaEntry) {
+                    // Campaign payload v2 (#14, docs/campaign-brief.md): the entry names
+                    // an IA item — no CID; content comes from archive.org, verified
+                    // against IA's own per-file checksums at preserve time.
+                    const QString iaId = jsonStr(man, "id");
+                    if (iaId.isEmpty()) {
+                        st.skippedNoCid++;   // an ia_item without an id is not preservable
+                        continue;
+                    }
+                    c.iaId = iaId;
+                    c.id = iaId;
+                    c.title = !jsonStr(man, "name").isEmpty() ? jsonStr(man, "name") : iaId;
+                    c.sizeBytes = man.value(QLatin1String("size")).toVariant().toLongLong();
+                } else {
+                    c.cid = cid;
+                    c.id = jsonStr(man, "id").isEmpty() ? txHash : jsonStr(man, "id");
+                    // live channels carry "label" (cid_pin convention) rather than "title"
+                    c.title = !jsonStr(man, "title").isEmpty() ? jsonStr(man, "title")
+                              : !jsonStr(man, "label").isEmpty() ? jsonStr(man, "label").left(120)
+                                                                 : cid;
+                    c.sizeBytes = man.value(QLatin1String("sizeBytes")).toVariant().toLongLong();
+                    c.items = man.value(QLatin1String("items")).toVariant().toLongLong();
+                    c.thumbnail = jsonStr(man, "thumbnail");
+                    deriveIaRef(c.cid, jsonStr(man, "label"), &c.iaId, &c.iaFile);
+                }
                 st.matched++;
                 out.append(c);
             }

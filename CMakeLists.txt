@@ -20,6 +20,8 @@ logos_module(
         src/logos_storage_transport.cpp
         src/share_helper.h
         src/share_helper.cpp
+        src/ia_files.h
+        src/ia_files.cpp
         src/generated/storage_module_api.cpp
     INCLUDE_DIRS
         src

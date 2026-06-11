@@ -276,6 +276,30 @@ private slots:
         QCOMPARE(LezClient::extractItems(blocks, kChannel, 10000).size(), 0);
     }
 
+    void extract_iaItemPayload()
+    {
+        // campaign payload v2 (#14): no cid — the IA identifier is the content ref
+        const QByteArray entry =
+            R"({"v":1,"type":"ia_item","id":"photo-metro-august-1991","name":"Metro photos","size":43386})";
+        QJsonArray ops{ inscribeOp(kChannel, entry, "campaign-signer") };
+        const auto items = LezClient::extractItems({ block(9000, "tx-ia", ops) }, kChannel, 10000);
+        QCOMPARE(items.size(), 1);
+        QCOMPARE(items[0].cid, QString());
+        QCOMPARE(items[0].iaId, QStringLiteral("photo-metro-august-1991"));
+        QCOMPARE(items[0].id, QStringLiteral("photo-metro-august-1991"));
+        QCOMPARE(items[0].title, QStringLiteral("Metro photos"));
+        QCOMPARE(items[0].sizeBytes, qint64(43386));
+        QVERIFY(items[0].iaFile.isEmpty());   // whole item, not a single file
+    }
+
+    void extract_iaItemWithoutIdSkipped()
+    {
+        LezClient::ScanStats st;
+        QJsonArray ops{ inscribeOp(kChannel, R"({"v":1,"type":"ia_item","name":"x"})", "s") };
+        QCOMPARE(LezClient::extractItems({ block(9000, "t", ops) }, kChannel, 10000, &st).size(), 0);
+        QCOMPARE(st.skippedNoCid, 1);   // no id = not preservable, and counted
+    }
+
     void extract_permissiveManifest_cidOnly()
     {
         // keeper-style {"type":"cid_pin","cid":...} — degenerate but preservable

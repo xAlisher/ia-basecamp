@@ -75,6 +75,22 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     });
     connect(m_storage, &StorageClient::uploadFinished, this,
             [this](bool upOk, const QString& cid, const QString& error) {
+        // campaign ia_item preserve owns this upload?
+        if (!m_iaItemId.isEmpty()) {
+            if (!m_iaTmpPath.isEmpty()) {
+                QFile::remove(m_iaTmpPath);
+                m_iaTmpPath.clear();
+            }
+            if (!upOk) {
+                iaFail(QStringLiteral("storage_upload_failed: ") + error);
+                return;
+            }
+            qInfo() << "ArchivePlugin: ia_item file stored" << cid
+                    << "(" << (m_iaIdx + 1) << "/" << m_iaFiles.size() << ")";
+            ++m_iaIdx;
+            iaNextFile();
+            return;
+        }
         if (m_reseedItemId.isEmpty())
             return;
         const QString itemId = m_reseedItemId;
@@ -367,17 +383,167 @@ QString ArchivePlugin::getItems(const QString& channelId)
     return ok({ { QStringLiteral("items"), m_lez->itemsJson(channelId) } });
 }
 
+// ── campaign ia_item preserve (#14) ──────────────────────────────────────────
+// Trust chain: published channel id → signer → IA item → bytes verified against
+// IA's own md5/sha1 → CID derived locally (keeper-exact naming keeps it
+// reproducible across preservers).
+
+void ArchivePlugin::iaFail(const QString& error)
+{
+    const QString itemId = m_iaItemId;
+    m_iaItemId.clear();
+    m_iaFiles.clear();
+    if (!m_iaTmpPath.isEmpty()) {
+        QFile::remove(m_iaTmpPath);
+        m_iaTmpPath.clear();
+    }
+    m_lez->setItemState(itemId, QStringLiteral("error"));
+    m_lastError = error;
+    qWarning() << "ArchivePlugin: ia_item preserve failed for" << itemId << "—" << error;
+}
+
+void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
+{
+    m_iaItemId = itemId;
+    m_iaIaId = iaId;
+    m_iaFiles.clear();
+    m_iaIdx = 0;
+    m_iaUnverified = 0;
+    m_lez->setItemState(itemId, QStringLiteral("mirroring"), 0);
+
+    if (!m_nam)
+        m_nam = new QNetworkAccessManager(this);
+    const QUrl url(QStringLiteral("https://archive.org/download/%1/%1_files.xml").arg(iaId));
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "ia-basecamp/0.2");
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                     QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(30000);
+    qInfo() << "ArchivePlugin: ia_item preserve — fetching manifest" << url.toString();
+    QNetworkReply* reply = m_nam->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        reply->deleteLater();
+        if (m_iaItemId.isEmpty())
+            return;   // failed/cancelled meanwhile
+        if (reply->error() != QNetworkReply::NoError) {
+            iaFail(QStringLiteral("ia_manifest_fetch_failed: ") + reply->errorString());
+            return;
+        }
+        m_iaFiles = parseIaFilesXml(reply->readAll());
+        if (m_iaFiles.isEmpty()) {
+            iaFail(QStringLiteral("ia_manifest_unparseable_or_empty"));
+            return;
+        }
+        qInfo() << "ArchivePlugin: ia_item manifest lists" << m_iaFiles.size() << "files";
+        iaNextFile();
+    });
+}
+
+void ArchivePlugin::iaNextFile()
+{
+    if (m_iaIdx >= m_iaFiles.size()) {
+        const QString itemId = m_iaItemId;
+        const int unverified = m_iaUnverified;
+        const int total = m_iaFiles.size();
+        m_iaItemId.clear();
+        m_iaFiles.clear();
+        m_lez->setItemState(itemId, QStringLiteral("mirrored"));
+        m_storage->queryRepoStat();
+        qInfo() << "ArchivePlugin: ia_item preserve complete —" << itemId
+                << total << "files," << unverified << "without published checksums";
+        if (unverified > 0)
+            m_lastError = QStringLiteral("preserved with %1 unverified file(s) — IA publishes no checksum for them").arg(unverified);
+        return;
+    }
+
+    const IaFileEntry entry = m_iaFiles.at(m_iaIdx);
+    const QString itemId = m_iaItemId;
+    const QUrl url(QStringLiteral("https://archive.org/download/%1/%2").arg(m_iaIaId, entry.name));
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "ia-basecamp/0.2");
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                     QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(30000);
+    QNetworkReply* reply = m_nam->get(req);
+
+    // keeper-exact temp naming — reproduces keeper's per-file dataset CIDs
+    const QString tmpPath = QDir::tempPath()
+        + QStringLiteral("/keeper-%1-%2")
+              .arg(QString(m_iaIaId).replace(QLatin1Char('/'), QLatin1Char('_')),
+                   QString(entry.name).replace(QLatin1Char('/'), QLatin1Char('_')));
+    auto* out = new QFile(tmpPath, reply);
+    out->open(QIODevice::WriteOnly | QIODevice::Truncate);
+    m_iaTmpPath = tmpPath;
+
+    connect(reply, &QNetworkReply::readyRead, this, [reply, out] {
+        out->write(reply->readAll());
+    });
+    connect(reply, &QNetworkReply::downloadProgress, this,
+            [this, itemId](qint64 recv, qint64 total) {
+        if (m_iaItemId != itemId || m_iaFiles.isEmpty())
+            return;
+        const int filePct = total > 0 ? int(recv * 100 / total) : 0;
+        m_lez->setItemState(itemId, QStringLiteral("mirroring"),
+                            (m_iaIdx * 100 + filePct) / m_iaFiles.size());
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, out, entry, tmpPath] {
+        out->close();
+        reply->deleteLater();
+        if (m_iaItemId.isEmpty())
+            return;
+        if (reply->error() != QNetworkReply::NoError) {
+            iaFail(QStringLiteral("ia_download_failed: %1 (%2)")
+                       .arg(entry.name, reply->errorString()));
+            return;
+        }
+        // the load-bearing step: bytes must match IA's published checksum (#14)
+        switch (verifyIaFile(tmpPath, entry)) {
+        case IaVerify::Mismatch:
+            iaFail(QStringLiteral("checksum_mismatch: ") + entry.name);
+            return;
+        case IaVerify::Unverified:
+            ++m_iaUnverified;
+            qWarning() << "ArchivePlugin: no IA checksum published for" << entry.name
+                       << "— storing unverified";
+            break;
+        case IaVerify::Verified:
+            break;
+        }
+        m_storage->upload(tmpPath);   // completion via uploadFinished
+    });
+}
+
 QString ArchivePlugin::mirrorItem(const QString& itemId)
 {
-    const QString cid = m_lez->itemCid(itemId);
-    if (cid.isEmpty())
-        return fail(QStringLiteral("unknown_item"));
-    if (m_cidToItem.contains(cid))
-        return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
         return fail(m_storage->storageState() == QLatin1String("starting")
                         ? QStringLiteral("storage_starting")
                         : QStringLiteral("storage_offline"));
+
+    const QString cid = m_lez->itemCid(itemId);
+    if (cid.isEmpty()) {
+        // campaign ia_item entry (#14): no inscribed CID — content comes from the
+        // Internet Archive, checksum-verified, stored locally
+        QString iaId;
+        for (const QJsonValue& v : m_lez->itemsJson()) {
+            const QJsonObject c = v.toObject();
+            if (c.value(QStringLiteral("id")).toString() == itemId) {
+                iaId = c.value(QStringLiteral("iaId")).toString();
+                break;
+            }
+        }
+        if (iaId.isEmpty())
+            return fail(QStringLiteral("unknown_item"));
+        if (!m_iaItemId.isEmpty() || !m_reseedItemId.isEmpty())
+            return fail(QStringLiteral("storage_busy"));
+        startIaPreserve(itemId, iaId);
+        return ok({ { QStringLiteral("itemId"), itemId },
+                    { QStringLiteral("iaId"), iaId },
+                    { QStringLiteral("mode"), QStringLiteral("ia_download") } });
+    }
+
+    if (m_cidToItem.contains(cid))
+        return fail(QStringLiteral("storage_busy"));
     m_cidToItem.insert(cid, itemId);
     m_lez->setItemState(itemId, QStringLiteral("mirroring"), 0);
     m_storage->pin(cid);
@@ -390,6 +556,9 @@ QString ArchivePlugin::unmirrorItem(const QString& itemId)
 {
     const QString cid = m_lez->itemCid(itemId);
     if (cid.isEmpty())
+        // ia_item entries store one CID per file — unpreserve needs per-file unpin
+        // bookkeeping that doesn't exist yet (deliberate v1 scope; the UI hides
+        // Remove for these rows)
         return fail(QStringLiteral("unknown_item"));
     if (m_cidToItem.contains(cid))
         return fail(QStringLiteral("storage_busy"));

@@ -24,6 +24,14 @@ add_executable(tst_storage_client
 target_include_directories(tst_storage_client PRIVATE ../../src)
 target_link_libraries(tst_storage_client PRIVATE Qt6::Core Qt6::Network Qt6::Test)
 
+add_executable(tst_ia_files
+    tst_ia_files.cpp
+    ../../src/ia_files.cpp
+    ../../src/ia_files.h
+)
+target_include_directories(tst_ia_files PRIVATE ../../src)
+target_link_libraries(tst_ia_files PRIVATE Qt6::Core Qt6::Test)
+
 add_executable(tst_share_helper
     tst_share_helper.cpp
     ../../src/share_helper.cpp
@@ -36,3 +44,4 @@ enable_testing()
 add_test(NAME lez_client COMMAND tst_lez_client)
 add_test(NAME storage_client COMMAND tst_storage_client)
 add_test(NAME share_helper COMMAND tst_share_helper)
+add_test(NAME ia_files COMMAND tst_ia_files)

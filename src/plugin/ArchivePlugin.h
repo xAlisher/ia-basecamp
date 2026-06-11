@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include "interface.h"
+#include "ia_files.h"
 
 class LogosAPI;
 class QNetworkAccessManager;
@@ -102,4 +103,17 @@ private:
     QString m_reseedCid;
     QString m_reseedTmpPath;
     QStringList m_reseedCandidates; // "id|file" splits still untried
+
+    // campaign ia_item preserve (#14): {id}_files.xml → per file: download with
+    // keeper-exact naming → verify md5/sha1 → upload. Sequential — one item, one
+    // file in flight (the storage upload contract). State below IS the machine.
+    void startIaPreserve(const QString& itemId, const QString& iaId);
+    void iaNextFile();
+    void iaFail(const QString& error);
+    QString m_iaItemId;             // "" = idle
+    QString m_iaIaId;
+    QList<IaFileEntry> m_iaFiles;
+    int m_iaIdx = 0;
+    int m_iaUnverified = 0;
+    QString m_iaTmpPath;
 };

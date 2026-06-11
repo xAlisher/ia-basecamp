@@ -858,7 +858,9 @@ Item {
                                     }
                                 }
                                 DarkButton {
-                                    visible: model.state === "mirrored"
+                                    // ia_item entries (no cid) have per-file CIDs in
+                                    // storage — unpreserve isn't supported for them yet
+                                    visible: model.state === "mirrored" && !!model.cid
                                     text: "Remove"
                                     Layout.preferredWidth: 84   // same footprint as Preserve
                                     enabled: !!model.id && root.storageState === "ready"
@@ -880,6 +882,11 @@ Item {
                                     color: root.textSecondary; font.pixelSize: 11
                                     elide: Text.ElideMiddle
                                     Layout.maximumWidth: 220
+                                }
+                                Label {
+                                    visible: !model.cid && !!model.iaId
+                                    text: "from archive.org · checksum-verified"
+                                    color: root.textMuted; font.pixelSize: 10
                                 }
                                 ToolButton {
                                     text: "tx " + root.shortId(model.txHash)
@@ -908,6 +915,7 @@ Item {
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                                 Label {
+                                    visible: !!model.cid
                                     text: "CID " + root.shortId(model.cid)
                                     color: root.textMuted; font.pixelSize: 11
                                 }

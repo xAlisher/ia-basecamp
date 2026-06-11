@@ -11,4 +11,5 @@ nix develop ../.. --command bash -c '
     XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_lez_client
     XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_storage_client
     XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_share_helper
+    XDG_DATA_HOME=$(mktemp -d) QT_QPA_PLATFORM=offscreen ./build/tst_ia_files
 '
