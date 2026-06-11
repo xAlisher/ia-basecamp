@@ -13,7 +13,8 @@ class TstIaFiles : public QObject {
 private slots:
     void parse_realShape()
     {
-        // the exact shape IA serves for {id}_files.xml (abridged)
+        // the exact shape IA serves for {id}_files.xml (abridged) — note the
+        // self-entry carries an md5 tagged <summation>, which #22 proved real
         const QByteArray xml = R"(<files>
   <file name="__ia_thumb.jpg" source="original">
     <mtime>1781100000</mtime>
@@ -21,24 +22,48 @@ private slots:
     <md5>0123456789abcdef0123456789abcdef</md5>
     <sha1>da39a3ee5e6b4b0d3255bfef95601890afd80709</sha1>
   </file>
-  <file name="photo-metro-august-1991_files.xml" source="metadata">
+  <file name="photo-metro-august-1991_files.xml" source="original">
+    <format>Metadata</format>
     <size>7817</size>
+    <md5>dbfa71cf81df146233fc9e6e8194490f</md5>
+    <summation>md5</summation>
   </file>
   <file name="meta.sqlite" source="metadata">
     <md5>FEDCBA9876543210fedcba9876543210</md5>
   </file>
 </files>)";
         const auto files = parseIaFilesXml(xml);
-        QCOMPARE(files.size(), 3);
+        // the <summation> self-entry is dropped (#22) — a manifest can't checksum
+        // itself, so verifying it always Mismatches and kills the whole preserve
+        QCOMPARE(files.size(), 2);
         QCOMPARE(files[0].name, QStringLiteral("__ia_thumb.jpg"));
         QCOMPARE(files[0].md5, QStringLiteral("0123456789abcdef0123456789abcdef"));
         QCOMPARE(files[0].sha1, QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd80709"));
         QCOMPARE(files[0].size, qint64(13138));
-        // the manifest can't checksum itself — entry survives, hashes empty
-        QCOMPARE(files[1].name, QStringLiteral("photo-metro-august-1991_files.xml"));
-        QVERIFY(files[1].md5.isEmpty());
-        // checksums normalize to lowercase
-        QCOMPARE(files[2].md5, QStringLiteral("fedcba9876543210fedcba9876543210"));
+        // no entry named *_files.xml survives the parse
+        for (const auto& f : files)
+            QVERIFY(!f.name.endsWith(QLatin1String("_files.xml")));
+        // a normal entry after the dropped self-entry still parses; lowercased
+        QCOMPARE(files[1].name, QStringLiteral("meta.sqlite"));
+        QCOMPARE(files[1].md5, QStringLiteral("fedcba9876543210fedcba9876543210"));
+    }
+
+    void parse_dropsSummationSelfEntry()
+    {
+        // #22 regression: an entry tagged <summation> (IA's marker for the manifest's
+        // own md5) must never reach the verify set — it can't match its own bytes.
+        const QByteArray xml = R"(<files>
+  <file name="content.pdf" source="original">
+    <md5>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</md5>
+  </file>
+  <file name="id_files.xml" source="original">
+    <md5>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</md5>
+    <summation>md5</summation>
+  </file>
+</files>)";
+        const auto files = parseIaFilesXml(xml);
+        QCOMPARE(files.size(), 1);
+        QCOMPARE(files[0].name, QStringLiteral("content.pdf"));
     }
 
     void parse_garbageYieldsNothing()

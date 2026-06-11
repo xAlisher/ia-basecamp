@@ -520,8 +520,13 @@ void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gateway
         bool added = false;
         QStringList newIds;
         for (const Item& c : found) {
+            // One row per item id. For ia_items the id is the IA identifier — the
+            // only load-bearing field (docs/campaign-brief.md) — so re-inscribing
+            // the same item is the same content, not a second row. Keeping id the
+            // sole key also keeps it consistent with the bare-id lookups below
+            // (itemCid/itemState/setItemState), which match the first id and stop.
             const bool dup = std::any_of(ch.items.cbegin(), ch.items.cend(),
-                                         [&c](const Item& e) { return e.txHash == c.txHash && e.id == c.id; });
+                                         [&c](const Item& e) { return e.id == c.id; });
             if (dup) {
                 pageStats.skippedDuplicate++;
                 pageStats.matched--;

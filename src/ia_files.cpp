@@ -10,6 +10,7 @@ QList<IaFileEntry> parseIaFilesXml(const QByteArray& xml)
     QXmlStreamReader r(xml);
     IaFileEntry cur;
     bool inFile = false;
+    bool isSummation = false;
     while (!r.atEnd()) {
         switch (r.readNext()) {
         case QXmlStreamReader::StartElement:
@@ -17,17 +18,24 @@ QList<IaFileEntry> parseIaFilesXml(const QByteArray& xml)
                 cur = IaFileEntry{};
                 cur.name = r.attributes().value(QLatin1String("name")).toString();
                 inFile = true;
+                isSummation = false;
             } else if (inFile && r.name() == QLatin1String("md5")) {
                 cur.md5 = r.readElementText().trimmed().toLower();
             } else if (inFile && r.name() == QLatin1String("sha1")) {
                 cur.sha1 = r.readElementText().trimmed().toLower();
             } else if (inFile && r.name() == QLatin1String("size")) {
                 cur.size = r.readElementText().trimmed().toLongLong();
+            } else if (inFile && r.name() == QLatin1String("summation")) {
+                // IA marks the manifest's own entry (the {id}_files.xml file) with
+                // <summation>; its md5 summates files.xml itself, so it can never
+                // match the served bytes (the md5 line is part of those bytes). Drop
+                // it — it's the manifest we already fetched, not content to verify.
+                isSummation = true;
             }
             break;
         case QXmlStreamReader::EndElement:
             if (r.name() == QLatin1String("file") && inFile) {
-                if (!cur.name.isEmpty())
+                if (!cur.name.isEmpty() && !isSummation)
                     out.append(cur);
                 inFile = false;
             }

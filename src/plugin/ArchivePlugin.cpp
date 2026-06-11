@@ -552,9 +552,14 @@ void ArchivePlugin::iaNextFile()
                 << total << "files," << unverified << "without published checksums";
         if (unverified > 0)
             m_lastError = QStringLiteral("preserved with %1 unverified file(s) — IA publishes no checksum for them").arg(unverified);
-        notifyDesktop(QStringLiteral("%1 preserved ✓").arg(itemId),
-                      QStringLiteral("%1 files, checksum-verified against the Internet Archive.")
-                          .arg(total));
+        // the notification must not over-claim: if any file had no IA-published
+        // checksum it was stored unverified (#14 trust chain), say so honestly
+        const QString body = unverified > 0
+            ? QStringLiteral("%1 files — %2 stored without an IA-published checksum.")
+                  .arg(total).arg(unverified)
+            : QStringLiteral("%1 files, checksum-verified against the Internet Archive.")
+                  .arg(total);
+        notifyDesktop(QStringLiteral("%1 preserved ✓").arg(itemId), body);
         return;
     }
 

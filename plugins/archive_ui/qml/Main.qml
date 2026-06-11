@@ -906,7 +906,10 @@ Item {
                                 }
                                 Label {
                                     visible: !model.cid && !!model.iaId
-                                    text: "from archive.org · checksum-verified"
+                                    // source, not outcome — verification happens at
+                                    // preserve time and is surfaced then (notification
+                                    // + activity log), not asserted on the idle row
+                                    text: "from archive.org"
                                     color: root.textMuted; font.pixelSize: 10
                                 }
                                 ToolButton {
