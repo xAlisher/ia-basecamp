@@ -51,7 +51,7 @@ QJsonObject block(qint64 slot, const QString& txHash, const QJsonArray& ops)
 
 QByteArray manifest(const char* id, const char* title, const char* cid, qint64 size)
 {
-    const QJsonObject m{ { "v", 1 },         { "type", "collection" }, { "id", id },
+    const QJsonObject m{ { "v", 1 },         { "type", "item" }, { "id", id },
                          { "title", title }, { "cid", cid },           { "sizeBytes", size },
                          { "items", 3 },     { "thumbnail", "thumb-cid" } };
     return QJsonDocument(m).toJson(QJsonDocument::Compact);
@@ -162,7 +162,7 @@ private slots:
         ops.append(inscribeOp(kChannel, QByteArray("\x01\x02\x03binary"), "sig-1"));
         const QJsonArray blocks{ block(9000, "tx-1", ops) };
 
-        const auto cols = LezClient::extractCollections(blocks, kChannel, 10000);
+        const auto cols = LezClient::extractItems(blocks, kChannel, 10000);
         QCOMPARE(cols.size(), 1);
         QCOMPARE(cols[0].id, QStringLiteral("c1"));
         QCOMPARE(cols[0].title, QStringLiteral("Maps"));
@@ -195,7 +195,7 @@ private slots:
                               manifest("c2", "Mine", "cid-2", 2), "s2") } } } } },
               } },
         };
-        const auto cols = LezClient::extractCollections({ multiTx }, kChannel, 10000);
+        const auto cols = LezClient::extractItems({ multiTx }, kChannel, 10000);
         QCOMPARE(cols.size(), 1);
         QCOMPARE(cols[0].blockHash, QStringLiteral("b9100"));
         QCOMPARE(cols[0].txIndex, qint64(1));
@@ -222,7 +222,7 @@ private slots:
         ScanWaiter waiter(c);
         c->followChannel(kChannel);   // deliberately no @slot hint
         QVERIFY(waiter.wait(kChannel));
-        const QJsonArray cols = c->collectionsJson();
+        const QJsonArray cols = c->itemsJson();
         QCOMPARE(cols.size(), 1);
         QCOMPARE(cols.at(0).toObject().value("blockHash").toString(), hexId);
         QCOMPARE(cols.at(0).toObject().value("txIndex").toInt(), 0);
@@ -240,7 +240,7 @@ private slots:
         ScanWaiter waiter(c);
         c->followChannel(kChannel);
         QVERIFY(waiter.wait(kChannel));
-        QCOMPARE(c->collectionsJson().size(), 1);
+        QCOMPARE(c->itemsJson().size(), 1);
     }
 
     void scan_diagnosticsCountEverySkip()
@@ -273,7 +273,7 @@ private slots:
     {
         QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "T", "cid-1", 1), "s") };
         const QJsonArray blocks{ block(10001, "tx-late", ops) };  // past lib_slot 10000
-        QCOMPARE(LezClient::extractCollections(blocks, kChannel, 10000).size(), 0);
+        QCOMPARE(LezClient::extractItems(blocks, kChannel, 10000).size(), 0);
     }
 
     void extract_permissiveManifest_cidOnly()
@@ -281,7 +281,7 @@ private slots:
         // keeper-style {"type":"cid_pin","cid":...} — degenerate but preservable
         const QByteArray pin = R"({"v":1,"type":"cid_pin","cid":"ia:kuMUquaeE6g","source":"keeper"})";
         QJsonArray ops{ inscribeOp(kChannel, pin, "s") };
-        const auto cols = LezClient::extractCollections({ block(9000, "tx-p", ops) }, kChannel, 10000);
+        const auto cols = LezClient::extractItems({ block(9000, "tx-p", ops) }, kChannel, 10000);
         QCOMPARE(cols.size(), 1);
         QCOMPARE(cols[0].cid, QStringLiteral("ia:kuMUquaeE6g"));
         QCOMPARE(cols[0].title, QStringLiteral("ia:kuMUquaeE6g"));  // falls back to cid
@@ -337,15 +337,15 @@ private slots:
         QCOMPARE(id, kChannel);
         QVERIFY(waiter.wait(kChannel));
 
-        const QJsonArray cols = c->collectionsJson();
+        const QJsonArray cols = c->itemsJson();
         QCOMPARE(cols.size(), 2);
         const QJsonArray chans = c->channelsJson();
         QCOMPARE(chans.size(), 1);
         QCOMPARE(chans[0].toObject().value("synced").toBool(), true);
-        QCOMPARE(chans[0].toObject().value("collections").toInt(), 2);
+        QCOMPARE(chans[0].toObject().value("items").toInt(), 2);
         QCOMPARE(chans[0].toObject().value("lastInscription").toInt(), 9500);
         QCOMPARE(c->summaryJson().value("following").toInt(), 1);
-        QCOMPARE(c->summaryJson().value("collections").toInt(), 2);
+        QCOMPARE(c->summaryJson().value("items").toInt(), 2);
     }
 
     void follow_rejectsDuplicate()
@@ -366,7 +366,7 @@ private slots:
         ScanWaiter waiter(c);
         c->followChannel(kChannel + "@7000");
         QVERIFY(waiter.wait(kChannel));
-        QCOMPARE(c->collectionsJson().size(), 1);
+        QCOMPARE(c->itemsJson().size(), 1);
 
         // chain advances; a new inscription lands past the old lib
         QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "Books", "cid-2", 7), "sig") };
@@ -378,12 +378,12 @@ private slots:
         ScanWaiter waiter2(c);
         QVERIFY(c->refreshChannel(kChannel));
         QVERIFY(waiter2.wait(kChannel));
-        QCOMPARE(c->collectionsJson().size(), 2);
+        QCOMPARE(c->itemsJson().size(), 2);
         // resumed from the cursor: only info + the delta pages, not a rescan of 7000+
         QVERIFY(m_node->requestCount - before <= 3);
     }
 
-    void unfollow_dropsCollections()
+    void unfollow_dropsItems()
     {
         QJsonArray ops{ inscribeOp(kChannel, manifest("c1", "Maps", "cid-1", 1), "sig") };
         m_node->blocks = QJsonArray{ block(9000, "tx-1", ops) };
@@ -392,7 +392,7 @@ private slots:
         c->followChannel(kChannel + "@8000");
         QVERIFY(waiter.wait(kChannel));
         QVERIFY(c->unfollowChannel(kChannel));
-        QCOMPARE(c->collectionsJson().size(), 0);
+        QCOMPARE(c->itemsJson().size(), 0);
         QCOMPARE(c->channelsJson().size(), 0);
         QVERIFY(!c->unfollowChannel(kChannel));
     }
@@ -412,7 +412,7 @@ private slots:
 
         QVERIFY(waiter.wait(kChannel, 10000));
         // the new scan starts at 9000 — the old generation's tx-1 (slot 1000) must not leak in
-        QCOMPARE(c->collectionsJson().size(), 0);
+        QCOMPARE(c->itemsJson().size(), 0);
         QCOMPARE(c->channelsJson().size(), 1);
         QCOMPARE(c->channelsJson()[0].toObject().value("synced").toBool(), true);
     }
@@ -428,7 +428,7 @@ private slots:
         ScanWaiter waiter(c);
         c->followChannel(kChannel + "@500");
         QVERIFY(waiter.wait(kChannel, 10000));
-        QCOMPARE(c->collectionsJson().size(), 2);
+        QCOMPARE(c->itemsJson().size(), 2);
     }
 
     void deriveIaRef_bothConventions()
@@ -477,7 +477,7 @@ private slots:
             { "preserveMode", "local" },
             { "channels", QJsonArray{ QJsonObject{
                   { "channelId", kChannel }, { "startSlot", 100 }, { "cursor", 200 },
-                  { "collections", QJsonArray{ QJsonObject{
+                  { "items", QJsonArray{ QJsonObject{
                         { "id", "c1" },
                         { "title", "Logos Storage: keeper-popeye_big_bad_sinbad-__ia_thumb.jpg" },
                         { "cid", "zDvZLegacy" },
@@ -492,7 +492,7 @@ private slots:
 
         LezClient* c = new LezClient(this);
         c->loadState();
-        const QJsonObject col = c->collectionsJson()[0].toObject();
+        const QJsonObject col = c->itemsJson()[0].toObject();
         QCOMPARE(col.value("iaId").toString(), QStringLiteral("popeye_big_bad_sinbad"));
         QCOMPARE(col.value("iaFile").toString(), QStringLiteral("__ia_thumb.jpg"));
         QCOMPARE(col.value("state").toString(), QStringLiteral("available"));
@@ -517,8 +517,8 @@ private slots:
         QCOMPARE(c2->gateways().size(), 1);
         QCOMPARE(c2->gateways()[0].nodeUrl, m_node->baseUrl());
         QCOMPARE(c2->channelsJson().size(), 1);
-        QCOMPARE(c2->collectionsJson().size(), 1);
-        QCOMPARE(c2->collectionsJson()[0].toObject().value("title").toString(),
+        QCOMPARE(c2->itemsJson().size(), 1);
+        QCOMPARE(c2->itemsJson()[0].toObject().value("title").toString(),
                  QStringLiteral("Maps"));
     }
 
@@ -583,7 +583,7 @@ private slots:
         ScanWaiter w1(c);
         c->followChannel(kChannel + "@7000");
         QVERIFY(w1.wait(kChannel));        // first scan completes on gateway 0
-        QCOMPARE(c->collectionsJson().size(), 1);
+        QCOMPARE(c->itemsJson().size(), 1);
 
         dying.refuse = true;               // gateway 0 dies; chain advances on gateway 1
         QJsonArray ops2{ inscribeOp(kChannel, manifest("c2", "B", "cid-2", 1), "sig") };
@@ -599,7 +599,7 @@ private slots:
         ScanWaiter w3(c);
         QVERIFY(c->refreshChannel(kChannel));   // now on gateway 1, resumes from cursor
         QVERIFY(w3.wait(kChannel));
-        QCOMPARE(c->collectionsJson().size(), 2);
+        QCOMPARE(c->itemsJson().size(), 2);
         QVERIFY(m_node->requestCount - healthyBefore <= 3);   // delta only, no rescan
     }
 
@@ -626,14 +626,14 @@ private slots:
         QSignalSpy errSpy(c, &LezClient::errorOccurred);
         c->followChannel(kChannel + "@500");
         QVERIFY(w1.wait(kChannel, 10000));
-        QCOMPARE(c->collectionsJson().size(), 1);   // page 1 (slot 1000) landed, then death
+        QCOMPARE(c->itemsJson().size(), 1);   // page 1 (slot 1000) landed, then death
         QCOMPARE(errSpy.count(), 1);                // surfaced, not silent
         QCOMPARE(c->channelsJson()[0].toObject().value("synced").toBool(), false);
 
         ScanWaiter w2(c);
         QVERIFY(c->refreshChannel(kChannel));       // rotated to the healthy gateway
         QVERIFY(w2.wait(kChannel, 10000));
-        QCOMPARE(c->collectionsJson().size(), 2);   // resumed; nothing skipped, no dupes
+        QCOMPARE(c->itemsJson().size(), 2);   // resumed; nothing skipped, no dupes
         QCOMPARE(c->channelsJson()[0].toObject().value("synced").toBool(), true);
     }
 
@@ -655,7 +655,7 @@ private slots:
 
         // the known inscription sits in the first scan page — don't wait for full sync
         const auto hasSpikeCid = [c] {
-            const QJsonArray cols = c->collectionsJson();
+            const QJsonArray cols = c->itemsJson();
             return std::any_of(cols.cbegin(), cols.cend(), [](const QJsonValue& v) {
                 return v.toObject().value("cid").toString() == QLatin1String("ia:kuMUquaeE6g");
             });

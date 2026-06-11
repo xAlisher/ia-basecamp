@@ -17,7 +17,7 @@ class StorageClient;
 class StorageTransport;
 
 /**
- * archive — follow curated LEZ channels + preserve their collections to Logos Storage.
+ * archive — follow curated LEZ channels + preserve their items to Logos Storage.
  *
  * Core module (logos_host), stash's shape: this process owns the gateway HTTP reads
  * (lez_client), the storage_module typed-SDK talk (logos_storage_transport — getClient
@@ -58,11 +58,11 @@ public:
     Q_INVOKABLE QString getScanDiagnostics(const QString& channelId);   // last scan's skip counters (#11)
     Q_INVOKABLE QString setChannelLabel(const QString& channelId, const QString& label);
 
-    // ── collections + preserve (Logos Storage) ───────────────────────────────
-    Q_INVOKABLE QString getCollections(const QString& channelId);  // "" = all followed
-    Q_INVOKABLE QString mirrorCollection(const QString& collectionId);
-    Q_INVOKABLE QString unmirrorCollection(const QString& collectionId);
-    Q_INVOKABLE QString getMirrorStatus(const QString& collectionId);
+    // ── items + preserve (Logos Storage) ───────────────────────────────
+    Q_INVOKABLE QString getItems(const QString& channelId);  // "" = all followed
+    Q_INVOKABLE QString mirrorItem(const QString& itemId);
+    Q_INVOKABLE QString unmirrorItem(const QString& itemId);
+    Q_INVOKABLE QString getMirrorStatus(const QString& itemId);
 
     // ── share cards (SPEC §12) ───────────────────────────────────────────────
     Q_INVOKABLE QString getShareData(const QString& scope);
@@ -89,16 +89,16 @@ private:
     std::unique_ptr<StorageTransport> m_transport;   // Logos Storage via storage_module
     StorageClient* m_storage = nullptr;
     QTimer*        m_healthTimer = nullptr;
-    QHash<QString, QString> m_cidToCollection;   // in-flight pin/unpin → collection id
+    QHash<QString, QString> m_cidToItem;   // in-flight pin/unpin → item id
     qint64         m_usedBytes = 0;
     QString        m_lastError;
 
     // preserve-by-reseed (keeper's flow): fetch failed → download the file from the
     // Internet Archive → upload into Logos Storage (we become the provider)
-    void startReseed(const QString& collectionId, const QString& cid);
-    void tryReseedCandidate(const QString& collectionId);   // walks m_reseedCandidates
+    void startReseed(const QString& itemId, const QString& cid);
+    void tryReseedCandidate(const QString& itemId);   // walks m_reseedCandidates
     QNetworkAccessManager* m_nam = nullptr;
-    QString m_reseedCollectionId;   // one re-seed at a time (upload contract)
+    QString m_reseedItemId;   // one re-seed at a time (upload contract)
     QString m_reseedCid;
     QString m_reseedTmpPath;
     QStringList m_reseedCandidates; // "id|file" splits still untried

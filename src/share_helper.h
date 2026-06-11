@@ -10,14 +10,14 @@
 namespace ShareHelper {
 
 // scope "me": everything the user mirrors (the contribution card).
-// scope <collectionId>: that one collection (the collection card).
-// Returns {ok:false,error} for an unknown collection id or an empty "me" scope.
+// scope <itemId>: that one item (the item card).
+// Returns {ok:false,error} for an unknown item id or an empty "me" scope.
 // Thumbnails are chain-inscribed (untrusted): a value is only emitted when it is a
 // bare CID-shaped token, resolved against `thumbnailBase` (the gateway's storage
 // endpoint) — full URLs from manifests are never passed through to the UI.
 // fallbackUsedBytes: real stored bytes (storage quotaUsedBytes) — cid_pin manifests
 // carry no sizeBytes, so the manifest sum is often 0
-QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
+QJsonObject buildShareData(const QJsonArray& items, const QString& scope,
                            const QString& thumbnailBase = QString(),
                            qint64 fallbackUsedBytes = 0);
 

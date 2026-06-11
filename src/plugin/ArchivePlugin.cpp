@@ -62,49 +62,49 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     });
     connect(m_storage, &StorageClient::pinFinished, this,
             [this](const QString& cid, bool pinOk, const QString& error) {
-        const QString collectionId = m_cidToCollection.take(cid);
+        const QString itemId = m_cidToItem.take(cid);
         if (pinOk) {
-            m_lez->setCollectionState(collectionId, QStringLiteral("mirrored"));
+            m_lez->setItemState(itemId, QStringLiteral("mirrored"));
             m_storage->queryRepoStat();
             return;
         }
         // nobody on the network provides this CID — keeper's flow: pull the file
         // from the Internet Archive and upload it, making US the provider
-        startReseed(collectionId, cid);
+        startReseed(itemId, cid);
         Q_UNUSED(error);
     });
     connect(m_storage, &StorageClient::uploadFinished, this,
             [this](bool upOk, const QString& cid, const QString& error) {
-        if (m_reseedCollectionId.isEmpty())
+        if (m_reseedItemId.isEmpty())
             return;
-        const QString collectionId = m_reseedCollectionId;
-        m_reseedCollectionId.clear();
+        const QString itemId = m_reseedItemId;
+        m_reseedItemId.clear();
         if (!m_reseedTmpPath.isEmpty()) {
             QFile::remove(m_reseedTmpPath);
             m_reseedTmpPath.clear();
         }
         if (!upOk) {
-            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            m_lez->setItemState(itemId, QStringLiteral("error"));
             m_lastError = QStringLiteral("reseed_upload_failed: ") + error;
-            qWarning() << "ArchivePlugin: reseed upload failed for" << collectionId << error;
+            qWarning() << "ArchivePlugin: reseed upload failed for" << itemId << error;
             return;
         }
-        qInfo() << "ArchivePlugin: reseed complete —" << collectionId << "now provided as" << cid;
+        qInfo() << "ArchivePlugin: reseed complete —" << itemId << "now provided as" << cid;
         if (!cid.isEmpty() && cid != m_reseedCid)
             qWarning() << "ArchivePlugin: reseeded CID differs from inscribed:" << cid
                        << "vs" << m_reseedCid;   // content drifted at the source — still held
-        m_lez->setCollectionState(collectionId, QStringLiteral("mirrored"));
+        m_lez->setItemState(itemId, QStringLiteral("mirrored"));
         m_storage->queryRepoStat();
         m_reseedCid.clear();
     });
     connect(m_storage, &StorageClient::unpinFinished, this,
             [this](const QString& cid, bool unpinOk, const QString& error) {
-        const QString collectionId = m_cidToCollection.take(cid);
+        const QString itemId = m_cidToItem.take(cid);
         if (unpinOk) {
-            m_lez->setCollectionState(collectionId, QStringLiteral("available"));
+            m_lez->setItemState(itemId, QStringLiteral("available"));
             m_storage->queryRepoStat();
         } else {
-            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            m_lez->setItemState(itemId, QStringLiteral("error"));
             m_lastError = error;
         }
     });
@@ -263,15 +263,15 @@ QString ArchivePlugin::setChannelLabel(const QString& channelId, const QString& 
                 { QStringLiteral("label"), label.left(64) } });
 }
 
-// ── collections + preserve ──────────────────────────────────────────────────
+// ── items + preserve ──────────────────────────────────────────────────
 
-void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
+void ArchivePlugin::startReseed(const QString& itemId, const QString& cid)
 {
     // resolve the IA source candidates from the inscription's keeper conventions
     QString title, manCid;
-    for (const QJsonValue& v : m_lez->collectionsJson()) {
+    for (const QJsonValue& v : m_lez->itemsJson()) {
         const QJsonObject c = v.toObject();
-        if (c.value(QStringLiteral("id")).toString() == collectionId) {
+        if (c.value(QStringLiteral("id")).toString() == itemId) {
             title = c.value(QStringLiteral("title")).toString();
             manCid = c.value(QStringLiteral("cid")).toString();
             break;
@@ -279,22 +279,22 @@ void ArchivePlugin::startReseed(const QString& collectionId, const QString& cid)
     }
     const QStringList candidates = LezClient::deriveIaCandidates(manCid, title);
     if (candidates.isEmpty() || candidates.first().endsWith(QLatin1Char('|'))) {
-        m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+        m_lez->setItemState(itemId, QStringLiteral("error"));
         m_lastError = QStringLiteral("not_on_network_and_no_ia_source");
         return;
     }
-    if (!m_reseedCollectionId.isEmpty()) {
-        m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+    if (!m_reseedItemId.isEmpty()) {
+        m_lez->setItemState(itemId, QStringLiteral("error"));
         m_lastError = QStringLiteral("reseed_busy");
         return;
     }
-    m_reseedCollectionId = collectionId;
+    m_reseedItemId = itemId;
     m_reseedCid = cid;
     m_reseedCandidates = candidates;
-    tryReseedCandidate(collectionId);
+    tryReseedCandidate(itemId);
 }
 
-void ArchivePlugin::tryReseedCandidate(const QString& collectionId)
+void ArchivePlugin::tryReseedCandidate(const QString& itemId)
 {
     const QStringList parts = m_reseedCandidates.takeFirst().split(QLatin1Char('|'));
     const QString iaId = parts.value(0);
@@ -326,29 +326,29 @@ void ArchivePlugin::tryReseedCandidate(const QString& collectionId)
         out->write(reply->readAll());
     });
     connect(reply, &QNetworkReply::downloadProgress, this,
-            [this, collectionId](qint64 recv, qint64 total) {
+            [this, itemId](qint64 recv, qint64 total) {
         const int pct = total > 0 ? int(recv * 100 / total) : 0;
-        m_lez->setCollectionState(collectionId, QStringLiteral("mirroring"), pct);
+        m_lez->setItemState(itemId, QStringLiteral("mirroring"), pct);
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, out, collectionId, tmpPath] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, out, itemId, tmpPath] {
         out->close();
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             QFile::remove(tmpPath);
             m_reseedTmpPath.clear();
             const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            qWarning() << "ArchivePlugin: reseed candidate failed for" << collectionId
+            qWarning() << "ArchivePlugin: reseed candidate failed for" << itemId
                        << "http" << http << reply->errorString();
             // the keeper label split is ambiguous — try the next (id,file) boundary
             if (!m_reseedCandidates.isEmpty()) {
-                tryReseedCandidate(collectionId);
+                tryReseedCandidate(itemId);
                 return;
             }
-            m_reseedCollectionId.clear();
+            m_reseedItemId.clear();
             const bool notAvailable = http == 404 || http == 503
                 || reply->error() == QNetworkReply::ContentNotFoundError
                 || reply->error() == QNetworkReply::OperationCanceledError;
-            m_lez->setCollectionState(collectionId, QStringLiteral("error"));
+            m_lez->setItemState(itemId, QStringLiteral("error"));
             m_lastError = notAvailable
                 ? QStringLiteral("file not available on the Internet Archive")
                 : QStringLiteral("ia_download_failed: ") + reply->errorString();
@@ -360,54 +360,54 @@ void ArchivePlugin::tryReseedCandidate(const QString& collectionId)
     });
 }
 
-QString ArchivePlugin::getCollections(const QString& channelId)
+QString ArchivePlugin::getItems(const QString& channelId)
 {
     if (!channelId.isEmpty() && !m_lez->isFollowed(channelId.toLower()))
         return fail(QStringLiteral("not_followed"));
-    return ok({ { QStringLiteral("collections"), m_lez->collectionsJson(channelId) } });
+    return ok({ { QStringLiteral("items"), m_lez->itemsJson(channelId) } });
 }
 
-QString ArchivePlugin::mirrorCollection(const QString& collectionId)
+QString ArchivePlugin::mirrorItem(const QString& itemId)
 {
-    const QString cid = m_lez->collectionCid(collectionId);
+    const QString cid = m_lez->itemCid(itemId);
     if (cid.isEmpty())
-        return fail(QStringLiteral("unknown_collection"));
-    if (m_cidToCollection.contains(cid))
+        return fail(QStringLiteral("unknown_item"));
+    if (m_cidToItem.contains(cid))
         return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
         return fail(m_storage->storageState() == QLatin1String("starting")
                         ? QStringLiteral("storage_starting")
                         : QStringLiteral("storage_offline"));
-    m_cidToCollection.insert(cid, collectionId);
-    m_lez->setCollectionState(collectionId, QStringLiteral("mirroring"), 0);
+    m_cidToItem.insert(cid, itemId);
+    m_lez->setItemState(itemId, QStringLiteral("mirroring"), 0);
     m_storage->pin(cid);
-    return ok({ { QStringLiteral("collectionId"), collectionId },
+    return ok({ { QStringLiteral("itemId"), itemId },
                 { QStringLiteral("cid"), cid },
                 { QStringLiteral("mode"), m_lez->preserveMode() } });
 }
 
-QString ArchivePlugin::unmirrorCollection(const QString& collectionId)
+QString ArchivePlugin::unmirrorItem(const QString& itemId)
 {
-    const QString cid = m_lez->collectionCid(collectionId);
+    const QString cid = m_lez->itemCid(itemId);
     if (cid.isEmpty())
-        return fail(QStringLiteral("unknown_collection"));
-    if (m_cidToCollection.contains(cid))
+        return fail(QStringLiteral("unknown_item"));
+    if (m_cidToItem.contains(cid))
         return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
         return fail(m_storage->storageState() == QLatin1String("starting")
                         ? QStringLiteral("storage_starting")
                         : QStringLiteral("storage_offline"));
-    m_cidToCollection.insert(cid, collectionId);
+    m_cidToItem.insert(cid, itemId);
     m_storage->unpin(cid);
-    return ok({ { QStringLiteral("collectionId"), collectionId } });
+    return ok({ { QStringLiteral("itemId"), itemId } });
 }
 
-QString ArchivePlugin::getMirrorStatus(const QString& collectionId)
+QString ArchivePlugin::getMirrorStatus(const QString& itemId)
 {
-    const QString state = m_lez->collectionState(collectionId);
+    const QString state = m_lez->itemState(itemId);
     if (state.isEmpty())
-        return fail(QStringLiteral("unknown_collection"));
-    return ok({ { QStringLiteral("collectionId"), collectionId },
+        return fail(QStringLiteral("unknown_item"));
+    return ok({ { QStringLiteral("itemId"), itemId },
                 { QStringLiteral("state"), state },
                 { QStringLiteral("storageState"), m_storage->storageState() } });
 }
@@ -426,7 +426,7 @@ QString ArchivePlugin::getShareData(const QString& scope)
     const QString thumbBase =
         gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).storageUrl;
     const QJsonObject data =
-        ShareHelper::buildShareData(m_lez->collectionsJson(), scope, thumbBase, m_usedBytes);
+        ShareHelper::buildShareData(m_lez->itemsJson(), scope, thumbBase, m_usedBytes);
     return QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact));
 }
 

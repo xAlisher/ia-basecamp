@@ -137,7 +137,7 @@ QString LezClient::parseChannelRef(const QString& ref, qint64* startSlot, QStrin
 
 // ── inscription decode ───────────────────────────────────────────────────────
 
-QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& blocks,
+QVector<LezClient::Item> LezClient::extractItems(const QJsonArray& blocks,
                                                              const QString& channelId,
                                                              qint64 libSlot,
                                                              ScanStats* stats)
@@ -147,7 +147,7 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
     ScanStats local;
     ScanStats& st = stats ? *stats : local;
 
-    QVector<Collection> out;
+    QVector<Item> out;
     for (const QJsonValue& bv : blocks) {
         const QJsonObject block = bv.toObject();
         const QJsonObject header = block.value(QLatin1String("header")).toObject();
@@ -196,10 +196,10 @@ QVector<LezClient::Collection> LezClient::extractCollections(const QJsonArray& b
                 const QString cid = jsonStr(man, "cid");
                 if (cid.isEmpty()) {
                     st.skippedNoCid++;
-                    continue;   // a collection without content is not preservable
+                    continue;   // a item without content is not preservable
                 }
 
-                Collection c;
+                Item c;
                 c.channelId = channelId;
                 c.cid = cid;
                 c.txHash = txHash;
@@ -337,7 +337,7 @@ bool LezClient::unfollowChannel(const QString& channelId)
                                   // disconnects every pending callback (#11)
     saveState();
     emit channelsChanged();
-    emit collectionsChanged();
+    emit itemsChanged();
     return true;
 }
 
@@ -484,21 +484,21 @@ void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gateway
         }
         const QJsonArray blocks = QJsonDocument::fromJson(body).array();
         ScanStats pageStats;
-        const QVector<Collection> found = extractCollections(blocks, channelId, libSlot,
+        const QVector<Item> found = extractItems(blocks, channelId, libSlot,
                                                              &pageStats);
 
         // reacquire after the parse — never hold the reference across anything async
         Channel& ch = m_channels[channelId];
         bool added = false;
-        for (const Collection& c : found) {
-            const bool dup = std::any_of(ch.collections.cbegin(), ch.collections.cend(),
-                                         [&c](const Collection& e) { return e.txHash == c.txHash && e.id == c.id; });
+        for (const Item& c : found) {
+            const bool dup = std::any_of(ch.items.cbegin(), ch.items.cend(),
+                                         [&c](const Item& e) { return e.txHash == c.txHash && e.id == c.id; });
             if (dup) {
                 pageStats.skippedDuplicate++;
                 pageStats.matched--;
                 continue;
             }
-            ch.collections.append(c);
+            ch.items.append(c);
             ch.lastInscription = qMax(ch.lastInscription, c.inscribedAtSlot);
             ch.curator = c.curator;
             added = true;
@@ -517,7 +517,7 @@ void LezClient::scanNextPage(const QString& channelId, QObject* ctx, int gateway
         total.otherChannelOps += pageStats.otherChannelOps;
 
         if (added)
-            emit collectionsChanged();
+            emit itemsChanged();
         scanNextPage(channelId, ctx, gatewayIdx, libSlot, pagesLeft - 1);
     });
 }
@@ -532,7 +532,7 @@ QJsonArray LezClient::channelsJson() const
             { QStringLiteral("channelId"), ch.channelId },
             { QStringLiteral("name"), ch.label.isEmpty() ? ch.channelId.left(8) : ch.label },
             { QStringLiteral("curator"), ch.curator },
-            { QStringLiteral("collections"), ch.collections.size() },
+            { QStringLiteral("items"), ch.items.size() },
             { QStringLiteral("lastInscription"), ch.lastInscription },
             { QStringLiteral("synced"), ch.synced },
         };
@@ -566,13 +566,13 @@ QJsonObject LezClient::scanDiagnosticsJson(const QString& channelId) const
     };
 }
 
-QJsonArray LezClient::collectionsJson(const QString& channelId) const
+QJsonArray LezClient::itemsJson(const QString& channelId) const
 {
     QJsonArray arr;
     for (const Channel& ch : m_channels) {
         if (!channelId.isEmpty() && ch.channelId != channelId.toLower())
             continue;
-        for (const Collection& c : ch.collections) {
+        for (const Item& c : ch.items) {
             arr.append(QJsonObject{
                 { QStringLiteral("id"), c.id },
                 { QStringLiteral("title"), c.title },
@@ -598,46 +598,46 @@ QJsonArray LezClient::collectionsJson(const QString& channelId) const
 
 QJsonObject LezClient::summaryJson() const
 {
-    qint64 collections = 0;
+    qint64 items = 0;
     qint64 mirrored = 0;
     for (const Channel& ch : m_channels) {
-        collections += ch.collections.size();
-        for (const Collection& c : ch.collections)
+        items += ch.items.size();
+        for (const Item& c : ch.items)
             if (c.state == QLatin1String("mirrored"))
                 ++mirrored;
     }
     return QJsonObject{
         { QStringLiteral("following"), m_channels.size() },
-        { QStringLiteral("collections"), collections },
+        { QStringLiteral("items"), items },
         { QStringLiteral("mirrored"), mirrored },
         { QStringLiteral("usedBytes"), 0 },    // overridden by the plugin from repo/stat
     };
 }
 
-QString LezClient::collectionCid(const QString& collectionId) const
+QString LezClient::itemCid(const QString& itemId) const
 {
     for (const Channel& ch : m_channels)
-        for (const Collection& c : ch.collections)
-            if (c.id == collectionId)
+        for (const Item& c : ch.items)
+            if (c.id == itemId)
                 return c.cid;
     return {};
 }
 
-QString LezClient::collectionState(const QString& collectionId) const
+QString LezClient::itemState(const QString& itemId) const
 {
     for (const Channel& ch : m_channels)
-        for (const Collection& c : ch.collections)
-            if (c.id == collectionId)
+        for (const Item& c : ch.items)
+            if (c.id == itemId)
                 return c.state;
     return {};
 }
 
-bool LezClient::setCollectionState(const QString& collectionId, const QString& state,
+bool LezClient::setItemState(const QString& itemId, const QString& state,
                                    qint64 progressBlocks)
 {
     for (Channel& ch : m_channels) {
-        for (Collection& c : ch.collections) {
-            if (c.id != collectionId)
+        for (Item& c : ch.items) {
+            if (c.id != itemId)
                 continue;
             c.state = state;
             if (progressBlocks >= 0)
@@ -646,7 +646,7 @@ bool LezClient::setCollectionState(const QString& collectionId, const QString& s
                 c.progressBlocks = 0;
                 saveState();   // terminal states only — progress ticks stay off disk
             }
-            emit collectionsChanged();
+            emit itemsChanged();
             return true;
         }
     }
@@ -673,7 +673,7 @@ void LezClient::saveState() const
     QJsonArray chans;
     for (const Channel& ch : m_channels) {
         QJsonArray cols;
-        for (const Collection& c : ch.collections) {
+        for (const Item& c : ch.items) {
             cols.append(QJsonObject{
                 { QStringLiteral("id"), c.id },
                 { QStringLiteral("title"), c.title },
@@ -699,7 +699,7 @@ void LezClient::saveState() const
             { QStringLiteral("lastInscription"), ch.lastInscription },
             { QStringLiteral("curator"), ch.curator },
             { QStringLiteral("synced"), ch.synced },
-            { QStringLiteral("collections"), cols },
+            { QStringLiteral("items"), cols },
         });
     }
 
@@ -758,9 +758,13 @@ void LezClient::loadState()
         ch.lastInscription = co.value(QLatin1String("lastInscription")).toVariant().toLongLong();
         ch.curator = jsonStr(co, "curator");
         ch.synced = co.value(QLatin1String("synced")).toBool();
-        for (const QJsonValue& colv : co.value(QLatin1String("collections")).toArray()) {
+        // migration: state persisted before the collections→items rename (#13)
+        const QJsonArray itemRows = co.contains(QLatin1String("items"))
+                                        ? co.value(QLatin1String("items")).toArray()
+                                        : co.value(QLatin1String("collections")).toArray();
+        for (const QJsonValue& colv : itemRows) {
             const QJsonObject c = colv.toObject();
-            Collection col;
+            Item col;
             col.id = jsonStr(c, "id");
             col.title = jsonStr(c, "title");
             col.channelId = ch.channelId;
@@ -787,14 +791,14 @@ void LezClient::loadState()
             if (col.state == QLatin1String("mirroring"))   // no pin survives a restart
                 col.state = QStringLiteral("available");
             if (col.state == QLatin1String("error"))       // errors aren't a property of
-                col.state = QStringLiteral("available");   // the collection — retryable
-            ch.collections.append(col);
+                col.state = QStringLiteral("available");   // the item — retryable
+            ch.items.append(col);
         }
         if (!ch.channelId.isEmpty())
             m_channels.insert(ch.channelId, ch);
     }
     if (!m_channels.isEmpty()) {
         emit channelsChanged();
-        emit collectionsChanged();
+        emit itemsChanged();
     }
 }

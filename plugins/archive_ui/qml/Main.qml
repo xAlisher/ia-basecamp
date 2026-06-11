@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// archive — follow curated LEZ channels, preserve collections to Storage.
+// archive — follow curated LEZ channels, preserve items to Storage.
 // Dark theme matching radio/keeper/stash. Sandbox rules (qml-sandbox-restrictions):
 // no network/FileDialog/Qt.openUrlExternally here — all IO lives in the C++ backend;
 // provenance links are copy-to-clipboard. Inside layouts use implicitHeight, never height.
@@ -32,20 +32,20 @@ Item {
     property string storageState: "offline"
     property string preserveMode: "local"
     property string activeGatewayUrl: ""
-    // channels/collections live in ListModels (not JS arrays): in-place role updates
+    // channels/items live in ListModels (not JS arrays): in-place role updates
     // keep delegate identity stable, so the viewport never jumps on poll/Preserve (#12)
     ListModel { id: channelsModel }
-    ListModel { id: collectionsModel }
+    ListModel { id: itemsModel }
 
     // every role always present with a stable type — ListModel locks roles on first
     // append, and absent-vs-undefined mismatches corrupt later setProperty calls
     function normalizeChannel(h) {
         return { channelId: h.channelId || "", name: h.name || "",
-                 curator: h.curator || "", collections: h.collections || 0,
+                 curator: h.curator || "", items: h.items || 0,
                  lastInscription: h.lastInscription || 0, synced: h.synced === true,
                  progress: h.progress !== undefined ? h.progress : -1 }
     }
-    function normalizeCollection(c) {
+    function normalizeItem(c) {
         return { id: c.id || "", title: c.title || "", channelId: c.channelId || "",
                  cid: c.cid || "", sizeBytes: c.sizeBytes || 0, items: c.items || 0,
                  thumbnail: c.thumbnail || "", inscribedAt: c.inscribedAt || 0,
@@ -114,7 +114,7 @@ Item {
     property string _loggedGatewayState: ""
     property string _loggedStorageState: ""
     property string _loggedError: ""
-    property var _prevCollectionStates: ({})   // id → state, for transition logging
+    property var _prevItemStates: ({})   // id → state, for transition logging
     property var _prevChannelSynced: ({})      // channelId → synced flag
 
     property bool pollBusy: false
@@ -166,14 +166,14 @@ Item {
                     }
                 } catch (e1) {}
                 try {
-                    var co = safeParse(logos.callModule("archive", "getCollections", [""]), null)
+                    var co = safeParse(logos.callModule("archive", "getItems", [""]), null)
                     if (co && co.ok) {
-                        var coNew = co.collections || []
-                        // per-collection preservation transitions → activity log
+                        var coNew = co.items || []
+                        // per-item preservation transitions → activity log
                         for (var ci = 0; ci < coNew.length; ci++) {
                             var c = coNew[ci]
-                            var prev = root._prevCollectionStates[c.id]
-                            var label = (c.iaId || c.title || "collection")
+                            var prev = root._prevItemStates[c.id]
+                            var label = (c.iaId || c.title || "item")
                                         + (c.iaFile ? "/" + c.iaFile : "")
                             if (prev !== undefined && prev !== c.state) {
                                 if (c.state === "mirrored")
@@ -185,9 +185,9 @@ Item {
                                 else if (c.state === "available" && prev === "mirrored")
                                     logEvent("info", "Removed " + label)
                             }
-                            root._prevCollectionStates[c.id] = c.state
+                            root._prevItemStates[c.id] = c.state
                         }
-                        syncListModel(collectionsModel, coNew.map(normalizeCollection), "id")
+                        syncListModel(itemsModel, coNew.map(normalizeItem), "id")
                     }
                 } catch (e2) {}
             } else {
@@ -204,12 +204,12 @@ Item {
         onTriggered: root.poll()
     }
 
-    // optimistic UI: flip a collection's state locally the instant the user acts;
+    // optimistic UI: flip a item's state locally the instant the user acts;
     // the next poll reconciles with the backend's truth
-    function flipCollectionState(collectionId, newState) {
-        for (var i = 0; i < collectionsModel.count; i++) {
-            if (collectionsModel.get(i).id === collectionId) {
-                collectionsModel.setProperty(i, "state", newState)
+    function flipItemState(itemId, newState) {
+        for (var i = 0; i < itemsModel.count; i++) {
+            if (itemsModel.get(i).id === itemId) {
+                itemsModel.setProperty(i, "state", newState)
                 break
             }
         }
@@ -292,7 +292,7 @@ Item {
             var ok = shareCard.grabToImage(function(result) {
                 shareWatchdog.stop()
                 var name = "ia-archive-" + (root.shareData && root.shareData.scope === "me"
-                                             ? "contribution" : "collection")
+                                             ? "contribution" : "item")
                            + "-" + Qt.formatDateTime(new Date(), "yyyyMMdd-hhmmss")
                 var tmp = "/tmp/ia-archive-card-grab.png"
                 if (!result.saveToFile(tmp)) {
@@ -423,7 +423,7 @@ Item {
             spacing: 18
             Label {
                 text: root.shareData && root.shareData.scope !== "me"
-                      ? (root.shareData.title || "A collection")
+                      ? (root.shareData.title || "A item")
                       : "I'm preserving the Internet Archive"
                 color: "#FFFFFF"; font.pixelSize: 44; font.bold: true
                 Layout.fillWidth: true; elide: Text.ElideRight
@@ -444,7 +444,7 @@ Item {
                     }
                     Label {
                         text: root.shareData && root.shareData.scope === "me"
-                              ? (root.shareData.count || 0) + " collections" : "on decentralized Storage"
+                              ? (root.shareData.count || 0) + " items" : "on decentralized Storage"
                         color: "#A4A4A4"; font.pixelSize: 22
                     }
                 }
@@ -467,7 +467,7 @@ Item {
                             fillMode: Image.PreserveAspectCrop
                             visible: status === Image.Ready
                         }
-                        Label {   // placeholder: collection initial
+                        Label {   // placeholder: item initial
                             anchors.centerIn: parent
                             visible: thumbImg.status !== Image.Ready
                             text: (root.shareData.items[index].name || "?").substring(0, 1).toUpperCase()
@@ -594,7 +594,7 @@ Item {
                 Label {
                     Layout.alignment: Qt.AlignVCenter
                     text: "You're preserving "
-                          + (root.summary.mirrored || 0) + " collection"
+                          + (root.summary.mirrored || 0) + " item"
                           + ((root.summary.mirrored || 0) === 1 ? "" : "s")
                           + " · " + root.prettySize(root.summary.usedBytes || 0)
                     color: root.textPrimary; font.pixelSize: 14; font.bold: true
@@ -603,7 +603,7 @@ Item {
                 Label {
                     Layout.alignment: Qt.AlignVCenter
                     text: "following " + (root.summary.following || 0)
-                          + " · " + (root.summary.collections || 0) + " collections"
+                          + " · " + (root.summary.items || 0) + " items"
                     color: root.textSecondary; font.pixelSize: 11
                 }
                 AccentButton {
@@ -621,7 +621,7 @@ Item {
             Layout.fillWidth: true
             background: Rectangle { color: root.bgPrimary }
             Repeater {
-                model: ["Channels", "Collections", "Activity"]
+                model: ["Channels", "Items", "Activity"]
                 TabButton {
                     text: modelData
                     contentItem: Label {
@@ -719,7 +719,7 @@ Item {
                                 }
                                 Label {
                                     text: (model.curator ? "curator " + root.shortId(model.curator) + " · " : "")
-                                          + (model.collections || 0) + " collections"
+                                          + (model.items || 0) + " items"
                                     color: root.textSecondary; font.pixelSize: 11
                                 }
                             }
@@ -770,14 +770,14 @@ Item {
                     Label {
                         visible: channelsModel.count === 0
                         anchors.centerIn: parent
-                        text: "Follow a curated channel to see its collections.\nReads need a synced gateway (LEZ#519)."
+                        text: "Follow a curated channel to see its items.\nReads need a synced gateway (LEZ#519)."
                         color: root.textMuted; font.pixelSize: 12
                         horizontalAlignment: Text.AlignHCenter
                     }
                 }
             }
 
-            // ── Collections tab ──────────────────────────────────────────────
+            // ── Items tab ──────────────────────────────────────────────
             ColumnLayout {
                 spacing: 8
                 // #519 surfaced where it matters: this list may be missing recent inscriptions
@@ -792,7 +792,7 @@ Item {
                         id: staleLbl
                         anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 10 }
                         text: root.gatewayState === "offline"
-                              ? "Gateway unreachable — showing cached collections; nothing here is live."
+                              ? "Gateway unreachable — showing cached items; nothing here is live."
                               : "Gateway is lagging " + root.syncLag + " slots behind the chain — recent inscriptions may be missing."
                         color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
                         font.pixelSize: 11; wrapMode: Text.WordWrap
@@ -800,7 +800,7 @@ Item {
                 }
                 ListView {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    model: collectionsModel
+                    model: itemsModel
                     clip: true
                     spacing: 6
                     delegate: Rectangle {
@@ -846,12 +846,12 @@ Item {
                                              && root.storageState === "ready"
                                     onClicked: {
                                         var R = root, t = model.iaId || model.title, id = model.id
-                                        R.flipCollectionState(id, "mirroring")   // instant feedback
+                                        R.flipItemState(id, "mirroring")   // instant feedback
                                         R.toast("Preserving " + t + "…")
-                                        R.call("mirrorCollection", [id], function(r) {
+                                        R.call("mirrorItem", [id], function(r) {
                                             if (r && r.ok) R.logEvent("mirror", "Preserving " + t)
                                             else {
-                                                R.flipCollectionState(id, "available")
+                                                R.flipItemState(id, "available")
                                                 R.toast("Preserve failed: " + (r ? r.error : "no response"))
                                             }
                                         })
@@ -864,7 +864,7 @@ Item {
                                     enabled: !!model.id && root.storageState === "ready"
                                     onClicked: {
                                         var R = root, t = model.iaId || model.title
-                                        R.call("unmirrorCollection", [model.id], function(r) {
+                                        R.call("unmirrorItem", [model.id], function(r) {
                                             if (r && r.ok) { R.logEvent("mirror", "Unpreserving " + t); R.toast("Unpreserved " + t) }
                                             else R.toast("Unpreserve failed: " + (r ? r.error : "no response"))
                                         })
@@ -916,9 +916,9 @@ Item {
                         }
                     }
                     Label {
-                        visible: collectionsModel.count === 0
+                        visible: itemsModel.count === 0
                         anchors.centerIn: parent
-                        text: "No collections yet — follow a channel first."
+                        text: "No items yet — follow a channel first."
                         color: root.textMuted; font.pixelSize: 12
                         horizontalAlignment: Text.AlignHCenter
                     }

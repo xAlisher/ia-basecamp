@@ -25,7 +25,7 @@ public:
         QString storageUrl;
     };
 
-    struct Collection {
+    struct Item {
         QString id;          // manifest id, falls back to the L1 tx hash
         QString title;
         QString channelId;
@@ -69,7 +69,7 @@ public:
         bool    synced = false;    // cursor caught up to lib_slot at last refresh
         qint64  lastLibSlot = 0;   // lib at the most recent scan — drives the progress %
         ScanStats lastScan;
-        QVector<Collection> collections;
+        QVector<Item> items;
     };
 
     static constexpr qint64 kPageSlots = 2000;     // slots per /blocks request
@@ -108,17 +108,17 @@ public:
     bool setChannelLabel(const QString& channelId, const QString& label);
 
     QJsonArray channelsJson() const;
-    QJsonArray collectionsJson(const QString& channelId = QString()) const;
+    QJsonArray itemsJson(const QString& channelId = QString()) const;
     QJsonObject summaryJson() const;
     QJsonObject scanDiagnosticsJson(const QString& channelId) const;   // last scan's skip counters
 
-    // mirror bookkeeping (P2 — storage results land back on the collection records)
-    QString collectionCid(const QString& collectionId) const;   // empty if unknown
-    QString collectionState(const QString& collectionId) const;
-    bool setCollectionState(const QString& collectionId, const QString& state,
+    // mirror bookkeeping (P2 — storage results land back on the item records)
+    QString itemCid(const QString& itemId) const;   // empty if unknown
+    QString itemState(const QString& itemId) const;
+    bool setItemState(const QString& itemId, const QString& state,
                             qint64 progressBlocks = -1);
 
-    // persistence (one file: gateways, preserveMode, channels+collections)
+    // persistence (one file: gateways, preserveMode, channels+items)
     void loadState();
     void saveState() const;
     static QString stateFilePath();
@@ -130,14 +130,14 @@ public:
     // keeper's "keeper-{id}-{file}" is ambiguous when the filename contains '-'
     static QStringList deriveIaCandidates(const QString& cid, const QString& label);
     static QString parseChannelRef(const QString& ref, qint64* startSlot, QString* errorCode);
-    static QVector<Collection> extractCollections(const QJsonArray& blocks,
+    static QVector<Item> extractItems(const QJsonArray& blocks,
                                                   const QString& channelId, qint64 libSlot,
                                                   ScanStats* stats = nullptr);
 
 signals:
     void healthChanged(const QString& state, qint64 lagSlots);
     void channelsChanged();
-    void collectionsChanged();
+    void itemsChanged();
     void scanFinished(const QString& channelId, bool reachedLib);
     void errorOccurred(const QString& code);
 

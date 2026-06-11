@@ -42,21 +42,21 @@ QString resolveThumbnail(const QString& thumbnail, const QString& base)
     return base + QStringLiteral("/ipfs/") + thumbnail;
 }
 
-QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
+QJsonObject buildShareData(const QJsonArray& items, const QString& scope,
                            const QString& thumbnailBase, qint64 fallbackUsedBytes)
 {
-    QJsonArray items;
+    QJsonArray cards;
     qint64 totalBytes = 0;
 
     if (scope == QLatin1String("me")) {
-        for (const QJsonValue& v : collections) {
+        for (const QJsonValue& v : items) {
             const QJsonObject c = v.toObject();
             if (c.value(QLatin1String("state")).toString() != QLatin1String("mirrored"))
                 continue;
-            items.append(itemFor(c, thumbnailBase));
+            cards.append(itemFor(c, thumbnailBase));
             totalBytes += c.value(QLatin1String("sizeBytes")).toVariant().toLongLong();
         }
-        if (items.isEmpty())
+        if (cards.isEmpty())
             return fail(QStringLiteral("nothing_preserved_yet"));
         if (totalBytes == 0)
             totalBytes = fallbackUsedBytes;   // manifests without sizes → real stored bytes
@@ -66,12 +66,12 @@ QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
             { QStringLiteral("title"), QStringLiteral("I'm preserving the archive") },
             { QStringLiteral("totalBytes"), totalBytes },
             { QStringLiteral("totalGB"), toGb(totalBytes) },
-            { QStringLiteral("count"), items.size() },
-            { QStringLiteral("items"), items },
+            { QStringLiteral("count"), cards.size() },
+            { QStringLiteral("items"), cards },
         };
     }
 
-    for (const QJsonValue& v : collections) {
+    for (const QJsonValue& v : items) {
         const QJsonObject c = v.toObject();
         if (c.value(QLatin1String("id")).toString() != scope)
             continue;
@@ -85,7 +85,7 @@ QJsonObject buildShareData(const QJsonArray& collections, const QString& scope,
             { QStringLiteral("items"), QJsonArray{ itemFor(c, thumbnailBase) } },
         };
     }
-    return fail(QStringLiteral("unknown_collection"));
+    return fail(QStringLiteral("unknown_item"));
 }
 
 QString sanitizeName(const QString& name)

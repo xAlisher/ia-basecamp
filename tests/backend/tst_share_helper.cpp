@@ -62,7 +62,7 @@ private slots:
         QCOMPARE(d.value("error").toString(), QStringLiteral("nothing_preserved_yet"));
     }
 
-    void shareData_collectionScope()
+    void shareData_itemScope()
     {
         const QJsonArray cols{ col("c1", "Maps", 2000000000, "available") };
         const QJsonObject d = ShareHelper::buildShareData(cols, "c1");
@@ -73,11 +73,11 @@ private slots:
         QCOMPARE(d.value("items").toArray().size(), 1);
     }
 
-    void shareData_unknownCollection()
+    void shareData_unknownItem()
     {
         const QJsonObject d = ShareHelper::buildShareData({}, "nope");
         QCOMPARE(d.value("ok").toBool(), false);
-        QCOMPARE(d.value("error").toString(), QStringLiteral("unknown_collection"));
+        QCOMPARE(d.value("error").toString(), QStringLiteral("unknown_item"));
     }
 
     void thumbnails_onlyCidShapedResolved()

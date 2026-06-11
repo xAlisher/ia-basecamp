@@ -6,7 +6,7 @@
 #include <QString>
 #include <functional>
 
-// Preserve side of the module (SPEC §5, P2v2): collections are preserved ONLY to Logos
+// Preserve side of the module (SPEC §5, P2v2): items are preserved ONLY to Logos
 // Storage, through the platform storage_module — the same path stash uses. No HTTP
 // storage endpoints, no alternative backends.
 //
