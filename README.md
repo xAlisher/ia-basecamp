@@ -3,6 +3,8 @@
 **Follow curated, permanent archive channels and help preserve their items to
 decentralized Storage — from any machine, no node required.**
 
+<img width="1290" height="1141" alt="image" src="https://github.com/user-attachments/assets/1327de5e-8ff2-48b4-b338-e48c99c265b0" />
+
 The consumer half of the Internet-Archive preservation campaign. Curators inscribe
 lightweight entries into permanent channels on the **Logos Execution Zone**;
 **anyone** runs this module to follow those channels and preserve their items to
