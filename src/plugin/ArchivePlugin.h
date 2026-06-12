@@ -42,7 +42,7 @@ public:
     ~ArchivePlugin() override;
 
     QString name()    const override { return QStringLiteral("archive"); }
-    QString version() const override { return QStringLiteral("0.2.0"); }
+    QString version() const override { return QStringLiteral("0.3.0"); }
 
     Q_INVOKABLE void initLogos(LogosAPI* api);
 
