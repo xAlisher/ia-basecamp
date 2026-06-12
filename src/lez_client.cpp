@@ -661,6 +661,29 @@ QString LezClient::itemCid(const QString& itemId) const
     return {};
 }
 
+QStringList LezClient::itemStoredCids(const QString& itemId) const
+{
+    for (const Channel& ch : m_channels)
+        for (const Item& c : ch.items)
+            if (c.id == itemId)
+                return c.storedCids;
+    return {};
+}
+
+bool LezClient::setItemStoredCids(const QString& itemId, const QStringList& cids)
+{
+    for (Channel& ch : m_channels) {
+        for (Item& c : ch.items) {
+            if (c.id != itemId)
+                continue;
+            c.storedCids = cids;
+            saveState();
+            return true;
+        }
+    }
+    return false;
+}
+
 QString LezClient::itemState(const QString& itemId) const
 {
     for (const Channel& ch : m_channels)
@@ -684,6 +707,24 @@ bool LezClient::setItemState(const QString& itemId, const QString& state,
                 c.progressBlocks = 0;
                 saveState();   // terminal states only — progress ticks stay off disk
             }
+            emit itemsChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LezClient::removeItem(const QString& itemId)
+{
+    // #29: drop a single item from its channel's list. It is on-chain, so a future
+    // rescan can resurface it — a "forget from my view" action, not an unpreserve
+    // (ia_item per-file unpin is unsupported in v1).
+    for (Channel& ch : m_channels) {
+        for (int i = 0; i < ch.items.size(); ++i) {
+            if (ch.items[i].id != itemId)
+                continue;
+            ch.items.remove(i);
+            saveState();
             emit itemsChanged();
             return true;
         }
@@ -727,6 +768,7 @@ void LezClient::saveState() const
                 { QStringLiteral("state"), c.state },
                 { QStringLiteral("iaId"), c.iaId },
                 { QStringLiteral("iaFile"), c.iaFile },
+                { QStringLiteral("storedCids"), QJsonArray::fromStringList(c.storedCids) },
             });
         }
         chans.append(QJsonObject{
@@ -824,6 +866,8 @@ bool LezClient::loadState()
             col.state = jsonStr(c, "state");
             col.iaId = jsonStr(c, "iaId");
             col.iaFile = jsonStr(c, "iaFile");
+            for (const QJsonValue& sv : c.value(QLatin1String("storedCids")).toArray())
+                col.storedCids.append(sv.toString());
             // migration: rows persisted before the iaId feature — the title IS the
             // inscribed label, so the IA source is still derivable
             if (col.iaId.isEmpty())

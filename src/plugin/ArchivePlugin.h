@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QVariantList>
@@ -13,6 +14,7 @@
 
 class LogosAPI;
 class QNetworkAccessManager;
+class QNetworkReply;
 class QTimer;
 class LezClient;
 class StorageClient;
@@ -40,7 +42,7 @@ public:
     ~ArchivePlugin() override;
 
     QString name()    const override { return QStringLiteral("archive"); }
-    QString version() const override { return QStringLiteral("0.2.0"); }
+    QString version() const override { return QStringLiteral("0.3.0"); }
 
     Q_INVOKABLE void initLogos(LogosAPI* api);
 
@@ -66,6 +68,8 @@ public:
     Q_INVOKABLE QString getItems(const QString& channelId);  // "" = all followed
     Q_INVOKABLE QString mirrorItem(const QString& itemId);
     Q_INVOKABLE QString unmirrorItem(const QString& itemId);
+    Q_INVOKABLE QString removeItem(const QString& itemId);   // #29: forget a single item
+    Q_INVOKABLE QString abortPreserve(const QString& itemId);   // #32: cancel in-flight/pending preserve
     Q_INVOKABLE QString getMirrorStatus(const QString& itemId);
 
     // ── share cards (SPEC §12) ───────────────────────────────────────────────
@@ -94,6 +98,7 @@ private:
     StorageClient* m_storage = nullptr;
     QTimer*        m_healthTimer = nullptr;
     QHash<QString, QString> m_cidToItem;   // in-flight pin/unpin → item id
+    QHash<QString, int> m_unpinRemaining;  // #35: itemId → ia_item files still unpinning
     qint64         m_usedBytes = 0;
     QString        m_lastError;
 
@@ -113,12 +118,17 @@ private:
     void startIaPreserve(const QString& itemId, const QString& iaId);
     void iaNextFile();
     void iaFail(const QString& error);
+    void iaPending(const QString& reason);   // #31: transient storage failure → pending + auto-retry
     QString m_iaItemId;             // "" = idle
     QString m_iaIaId;
     QList<IaFileEntry> m_iaFiles;
     int m_iaIdx = 0;
     int m_iaUnverified = 0;
     QString m_iaTmpPath;
+    qint64  m_iaTotalBytes = 0;   // #30: byte-weighted progress (Σ files.xml sizes)
+    qint64  m_iaDoneBytes = 0;    // bytes from already-completed files
+    QStringList m_iaStoredCids;   // #35: CIDs uploaded this run — persisted on complete
+    QPointer<QNetworkReply> m_iaReply;   // #32: in-flight download, for abort
 
     // #15: dev fixture channel until Logos/IA publish official ids
     static constexpr const char* kOfficialCampaignChannel =

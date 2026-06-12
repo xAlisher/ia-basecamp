@@ -82,11 +82,17 @@ void ArchivePlugin::initLogos(LogosAPI* api)
                 m_iaTmpPath.clear();
             }
             if (!upOk) {
-                iaFail(QStringLiteral("storage_upload_failed: ") + error);
+                // #31: storage stalls/goes offline transiently (#23) — don't fail
+                // loudly; mark pending (yellow breathing) and auto-retry when ready
+                iaPending(QStringLiteral("storage_upload_failed: ") + error);
                 return;
             }
             qInfo() << "ArchivePlugin: ia_item file stored" << cid
                     << "(" << (m_iaIdx + 1) << "/" << m_iaFiles.size() << ")";
+            if (!cid.isEmpty())               // #35: remember it so Remove can unpin it
+                m_iaStoredCids.append(cid);
+            if (m_iaIdx < m_iaFiles.size())   // #30: this file's bytes are now done
+                m_iaDoneBytes += m_iaFiles.at(m_iaIdx).size;
             ++m_iaIdx;
             iaNextFile();
             return;
@@ -116,13 +122,21 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     connect(m_storage, &StorageClient::unpinFinished, this,
             [this](const QString& cid, bool unpinOk, const QString& error) {
         const QString itemId = m_cidToItem.take(cid);
-        if (unpinOk) {
-            m_lez->setItemState(itemId, QStringLiteral("available"));
-            m_storage->queryRepoStat();
-        } else {
+        if (itemId.isEmpty())
+            return;
+        if (!unpinOk) {
+            m_unpinRemaining.remove(itemId);   // #35: abandon the multi-file unpin
             m_lez->setItemState(itemId, QStringLiteral("error"));
             m_lastError = error;
+            return;
         }
+        // #35: multi-file ia_item — flip to available only once every file is removed
+        if (m_unpinRemaining.contains(itemId) && --m_unpinRemaining[itemId] > 0)
+            return;
+        m_unpinRemaining.remove(itemId);
+        m_lez->setItemStoredCids(itemId, QStringList());   // nothing stored anymore
+        m_lez->setItemState(itemId, QStringLiteral("available"));
+        m_storage->queryRepoStat();
     });
     connect(m_storage, &StorageClient::repoStatResult, this,
             [this](qint64 usedBytes) { m_usedBytes = usedBytes; });
@@ -245,9 +259,10 @@ void ArchivePlugin::drainAutoQueue()
         return;
     while (!m_autoQueue.isEmpty()) {
         const QString id = m_autoQueue.takeFirst();
-        if (m_lez->itemState(id) != QLatin1String("available")) {
-            qInfo() << "ArchivePlugin: auto-preserve skipped" << id
-                    << "— already" << m_lez->itemState(id);
+        const QString st = m_lez->itemState(id);
+        // available = new auto item; pending = transient-storage retry (#31)
+        if (st != QLatin1String("available") && st != QLatin1String("pending")) {
+            qInfo() << "ArchivePlugin: auto-preserve skipped" << id << "— already" << st;
             continue;
         }
         qInfo() << "ArchivePlugin: auto-preserving" << id;
@@ -263,7 +278,10 @@ QString ArchivePlugin::getStatus()
     if (!m_lez)
         return fail(QStringLiteral("not_initialized"));
     QJsonObject summary = m_lez->summaryJson();
-    summary.insert(QStringLiteral("usedBytes"), m_usedBytes);
+    // #34: the counter reflects what you're preserving — when nothing is tracked
+    // (e.g. after Remove all), don't surface orphaned storage bytes as "0 items · X"
+    const bool nothingPreserved = summary.value(QStringLiteral("mirrored")).toInt() == 0;
+    summary.insert(QStringLiteral("usedBytes"), nothingPreserved ? qint64(0) : m_usedBytes);
     const auto gws = m_lez->gateways();
     const QString activeUrl =
         gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).nodeUrl;
@@ -345,6 +363,8 @@ QString ArchivePlugin::removeAllItems()
     const QStringList ids = m_lez->followedChannelIds();
     for (const QString& id : ids)
         m_lez->unfollowChannel(id);
+    m_autoQueue.clear();   // #31: drop any pending retries
+    m_usedBytes = 0;       // #34: nothing tracked → counter reads truthful zero
     return ok({ { QStringLiteral("removed"), static_cast<int>(ids.size()) } });
 }
 
@@ -521,6 +541,7 @@ void ArchivePlugin::iaFail(const QString& error)
     const QString itemId = m_iaItemId;
     m_iaItemId.clear();
     m_iaFiles.clear();
+    m_iaStoredCids.clear();
     if (!m_iaTmpPath.isEmpty()) {
         QFile::remove(m_iaTmpPath);
         m_iaTmpPath.clear();
@@ -529,6 +550,28 @@ void ArchivePlugin::iaFail(const QString& error)
     m_lastError = error;
     qWarning() << "ArchivePlugin: ia_item preserve failed for" << itemId << "—" << error;
     notifyDesktop(QStringLiteral("Preserve failed: %1").arg(itemId), error);
+}
+
+void ArchivePlugin::iaPending(const QString& reason)
+{
+    // #31: transient storage failure (offline/stall) — keep the item recoverable.
+    // Mark it "pending" (yellow breathing in the UI), drop the in-flight download, and
+    // queue it so drainAutoQueue re-preserves it automatically when storage is ready.
+    // No loud "Preserve failed" alarm — this is expected churn, not a real failure.
+    const QString itemId = m_iaItemId;
+    m_iaItemId.clear();
+    m_iaFiles.clear();
+    m_iaStoredCids.clear();
+    if (!m_iaTmpPath.isEmpty()) {
+        QFile::remove(m_iaTmpPath);
+        m_iaTmpPath.clear();
+    }
+    m_lez->setItemState(itemId, QStringLiteral("pending"));
+    m_lastError = reason;
+    qInfo() << "ArchivePlugin: ia_item pending — will retry when storage ready —"
+            << itemId << "—" << reason;
+    if (!m_autoQueue.contains(itemId))
+        m_autoQueue.append(itemId);
 }
 
 void ArchivePlugin::notifyDesktop(const QString& summary, const QString& body)
@@ -548,6 +591,9 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
     m_iaFiles.clear();
     m_iaIdx = 0;
     m_iaUnverified = 0;
+    m_iaTotalBytes = 0;
+    m_iaDoneBytes = 0;
+    m_iaStoredCids.clear();   // #35: a fresh run re-uploads (keeper-exact CIDs dedupe)
     m_lez->setItemState(itemId, QStringLiteral("mirroring"), 0);
 
     if (!m_nam)
@@ -560,6 +606,7 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
     req.setTransferTimeout(30000);
     qInfo() << "ArchivePlugin: ia_item preserve — fetching manifest" << url.toString();
     QNetworkReply* reply = m_nam->get(req);
+    m_iaReply = reply;   // #32: track for abort
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
         if (m_iaItemId.isEmpty())
@@ -573,7 +620,12 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
             iaFail(QStringLiteral("ia_manifest_unparseable_or_empty"));
             return;
         }
-        qInfo() << "ArchivePlugin: ia_item manifest lists" << m_iaFiles.size() << "files";
+        m_iaDoneBytes = 0;
+        m_iaTotalBytes = 0;
+        for (const IaFileEntry& f : m_iaFiles)   // #30: byte-weighted progress
+            m_iaTotalBytes += f.size;
+        qInfo() << "ArchivePlugin: ia_item manifest lists" << m_iaFiles.size() << "files,"
+                << m_iaTotalBytes << "bytes";
         iaNextFile();
     });
 }
@@ -586,6 +638,8 @@ void ArchivePlugin::iaNextFile()
         const int total = m_iaFiles.size();
         m_iaItemId.clear();
         m_iaFiles.clear();
+        m_lez->setItemStoredCids(itemId, m_iaStoredCids);   // #35: Remove unpins these
+        m_iaStoredCids.clear();
         m_lez->setItemState(itemId, QStringLiteral("mirrored"));
         m_storage->queryRepoStat();
         qInfo() << "ArchivePlugin: ia_item preserve complete —" << itemId
@@ -612,6 +666,7 @@ void ArchivePlugin::iaNextFile()
                      QNetworkRequest::NoLessSafeRedirectPolicy);
     req.setTransferTimeout(30000);
     QNetworkReply* reply = m_nam->get(req);
+    m_iaReply = reply;   // #32: track for abort
 
     // keeper-exact temp naming — reproduces keeper's per-file dataset CIDs
     const QString tmpPath = QDir::tempPath()
@@ -629,9 +684,14 @@ void ArchivePlugin::iaNextFile()
             [this, itemId](qint64 recv, qint64 total) {
         if (m_iaItemId != itemId || m_iaFiles.isEmpty())
             return;
-        const int filePct = total > 0 ? int(recv * 100 / total) : 0;
-        m_lez->setItemState(itemId, QStringLiteral("mirroring"),
-                            (m_iaIdx * 100 + filePct) / m_iaFiles.size());
+        int pct;
+        if (m_iaTotalBytes > 0)   // #30: byte-weighted — smooth, work-proportional
+            pct = int((m_iaDoneBytes + recv) * 100 / m_iaTotalBytes);
+        else {                    // fallback when files.xml carries no sizes
+            const int filePct = total > 0 ? int(recv * 100 / total) : 0;
+            pct = (m_iaIdx * 100 + filePct) / m_iaFiles.size();
+        }
+        m_lez->setItemState(itemId, QStringLiteral("mirroring"), pct);
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, out, entry, tmpPath] {
         out->close();
@@ -701,20 +761,65 @@ QString ArchivePlugin::mirrorItem(const QString& itemId)
 
 QString ArchivePlugin::unmirrorItem(const QString& itemId)
 {
-    const QString cid = m_lez->itemCid(itemId);
-    if (cid.isEmpty())
-        // ia_item entries store one CID per file — unpreserve needs per-file unpin
-        // bookkeeping that doesn't exist yet (deliberate v1 scope; the UI hides
-        // Remove for these rows)
-        return fail(QStringLiteral("unknown_item"));
-    if (m_cidToItem.contains(cid))
-        return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
         return fail(m_storage->storageState() == QLatin1String("starting")
                         ? QStringLiteral("storage_starting")
                         : QStringLiteral("storage_offline"));
-    m_cidToItem.insert(cid, itemId);
-    m_storage->unpin(cid);
+
+    // inscribed rows carry one CID; campaign ia_item rows carry the per-file CIDs we
+    // uploaded (#35) — unpreserve removes every one from Logos Storage and frees the
+    // bytes on disk, then resets the item to available (re-preservable, line stays)
+    QStringList cids;
+    const QString cid = m_lez->itemCid(itemId);
+    if (!cid.isEmpty())
+        cids << cid;
+    else
+        cids = m_lez->itemStoredCids(itemId);
+    if (cids.isEmpty())
+        return fail(QStringLiteral("nothing_stored"));   // never preserved, or a pre-#35 row
+    for (const QString& c : cids)
+        if (m_cidToItem.contains(c))
+            return fail(QStringLiteral("storage_busy"));
+
+    // unpin is synchronous (blocking IPC); the shared unpinFinished handler flips the
+    // item to available once the last file is gone. Insert+unpin per file so each
+    // completion finds its mapping.
+    m_unpinRemaining.insert(itemId, cids.size());
+    for (const QString& c : cids) {
+        m_cidToItem.insert(c, itemId);
+        m_storage->unpin(c);
+    }
+    return ok({ { QStringLiteral("itemId"), itemId },
+                { QStringLiteral("files"), cids.size() } });
+}
+
+QString ArchivePlugin::removeItem(const QString& itemId)
+{
+    // #29: forget a single item from the followed-channel list (view-level removal;
+    // a rescan can resurface it — not an unpreserve). Cheap, no storage bookkeeping.
+    if (!m_lez->removeItem(itemId))
+        return fail(QStringLiteral("unknown_item"));
+    return ok({ { QStringLiteral("itemId"), itemId } });
+}
+
+QString ArchivePlugin::abortPreserve(const QString& itemId)
+{
+    // #32: cancel an in-flight (mirroring) or queued (pending) preserve and reset the
+    // item to available. Clear m_iaItemId FIRST so the synchronous finished() from
+    // abort() bails (every handler checks it) — storage finishes its current op
+    // harmlessly and isn't left busy, so the next preserve can start cleanly.
+    m_autoQueue.removeAll(itemId);   // drop a pending retry
+    if (m_iaItemId == itemId) {
+        m_iaItemId.clear();
+        m_iaFiles.clear();
+        m_iaTotalBytes = 0;
+        m_iaDoneBytes = 0;
+        m_iaStoredCids.clear();
+        if (m_iaReply) { m_iaReply->abort(); m_iaReply = nullptr; }
+        if (!m_iaTmpPath.isEmpty()) { QFile::remove(m_iaTmpPath); m_iaTmpPath.clear(); }
+    }
+    m_lez->setItemState(itemId, QStringLiteral("available"));
+    qInfo() << "ArchivePlugin: preserve aborted —" << itemId;
     return ok({ { QStringLiteral("itemId"), itemId } });
 }
 
