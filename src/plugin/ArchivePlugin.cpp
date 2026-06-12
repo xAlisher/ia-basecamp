@@ -221,11 +221,19 @@ void ArchivePlugin::pollGatewayHealth()
     if (!m_lez)
         return;
     m_lez->pollHealth();
-    m_storage->pollHealth();
-    // usedBytes resets with the process — keep the campaign counter live, not
-    // only after the next preserve
-    if (m_storage->storageState() == QLatin1String("ready"))
-        m_storage->queryRepoStat();
+    // Don't probe storage while our own preserve upload is in flight (#23). The
+    // storage IPC is serial: a ping()/queryRepoStat() during an upload contends
+    // with it, the probe times out → we flip to a false "offline", and the upload
+    // we're running fails with storage_upload_failed. The upload reports its own
+    // completion via uploadFinished, so the probe gains nothing here.
+    const bool uploadInFlight = !m_iaItemId.isEmpty() || !m_reseedItemId.isEmpty();
+    if (!uploadInFlight) {
+        m_storage->pollHealth();
+        // usedBytes resets with the process — keep the campaign counter live, not
+        // only after the next preserve
+        if (m_storage->storageState() == QLatin1String("ready"))
+            m_storage->queryRepoStat();
+    }
     drainAutoQueue();   // #17 — retries items queued while storage was busy/offline
 }
 
