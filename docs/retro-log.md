@@ -190,3 +190,30 @@ without verifying the current AppImage honours the var. Flagged the recipe suspe
 incomplete — shipped a probe-skip that didn't fix it. The real cause was the storage node itself
 stalling, failing the upload IPC. Root cause: stopped at the first plausible mechanism without
 confirming the upload (not just the probe) was what failed.
+
+## 2026-06-12 — UI redesign epic (#26–#36, v0.3.0)
+
+**Win** [project] · #35 turned a "deliberate v1 gap" into a clean capability at near-zero cost.
+`unmirrorItem` had bailed on ia_item rows because per-file CIDs "didn't exist yet" — but the
+upload loop already computed each CID and threw it away. Persisting them (`storedCids`) made
+unpreserve unpin every file (freeing disk) and reset the row to Preserve. Lesson: before
+enshrining a scope cut as a limitation, check what it actually costs to close — here it was
+"stop discarding data we already have."
+
+**Win** [process] · pipelined the dual-platform release — kicked the mac build (ssh `git reset
+--hard origin/main` + `nix build .#lgx-portable`) in the background while building linux
+artefacts locally; both finished in one wall-clock window. Linux core = dual-variant merge
+(lgpm needs the dev variant), mac core = single portable darwin-arm64. 4 assets, one release.
+
+**Win** [project] · #36 fixed by recognising opacity was BOTH animated (breathing value source)
+and needed a disabled-dim — replaced an imperative `onStChanged: opacity = 1` with a declarative
+binding the animation overrides while running and restores on stop. → basecamp-skill
+`qml-animation-value-source-vs-binding`.
+
+**Win** [process] · investigate-then-file held: each UI fix was filed (#30–#36) with the root
+cause noted before implementing, so scope stayed crisp and the user could eyeball each on Wild.
+#35/#36 were filed-then-implemented in the same turn because the user said "issue and implement".
+
+**Note** · low-friction epic — the view-only-QML + state-machine-in-lez architecture absorbed
+every change (channels→settings, docked activity, abort, label edit, stats) without backend
+churn. No genuine fail to report; not inventing one.

@@ -43,3 +43,32 @@ See SPEC.md for the design. Key facts:
 - **Parallel-instance gotcha:** `LOGOS_DATA_DIR` did NOT separate profiles on the current AppImage
   (it used the default profile) — see the suspect `logos-data-dir-multi-instance` recipe. To run
   "current + archive" alongside an existing install, the module had to go in the default profile.
+
+## UI redesign + unpreserve (v0.3.0 — 2026-06-12, #26–#36)
+
+- **Remove = unpreserve (#35):** ia_item preserve uploads one CID per file; those CIDs were being
+  discarded, so unpreserve had nothing to unpin (the old `unmirrorItem` bailed on ia_item rows as
+  a "deliberate v1 gap"). Fix: accumulate each upload's CID in `m_iaStoredCids`, persist on the
+  item (`Item.storedCids`, in state.json) at completion. `unmirrorItem` now unpins every stored
+  CID (`storage.remove` → frees disk), flipping to `available` only after the last file via an
+  `m_unpinRemaining[itemId]` counter. The lesson: a scope cut ("doesn't exist yet") was cheap to
+  close because we were already computing the data we threw away — check the close cost before
+  enshrining a gap.
+- **Idempotent re-upload:** keeper-exact naming makes a fresh preserve after abort/pending produce
+  the SAME CIDs (storage dedupes), so `m_iaStoredCids.clear()` at the start of every run is safe —
+  partial leftovers from an aborted run aren't orphaned.
+- **Sync-unpin caveat:** `m_storage->remove()` is a blocking IPC and `unmirrorItem` loops it
+  synchronously over every file — fine for the small campaign fixtures, but a large multi-file
+  item would block logos_host for the duration. Revisit (async drain) if items get big.
+- **Cross-platform release set:** a release ships 4 lgx — core+ui × linux+mac. **Linux core MUST be
+  the dual-variant merge** (portable + dev manifests; lgpm needs the dev variant — see
+  `scripts/install-lgx.sh` for the merge). **Mac core is a single portable `darwin-arm64`** (no dev
+  merge). This module is pure-Qt (no boost/ssl), so its darwin portable variant carries just the
+  dylib + png. Build mac artefacts over ssh `mac`: `git reset --hard origin/main` then
+  `nix build .#lgx-portable` for core and `./plugins/archive_ui#lgx-portable` for ui; scp back
+  renamed `archive-{core,_ui}-darwin-arm64.lgx`. Pipeline it (background ssh) against the local
+  linux build — no idle wait.
+- **QML dim-while-busy:** the Preserve pill's `opacity` is both breathing (SequentialAnimation
+  value source) and dim-when-offline (#36). Express the dim as a declarative binding; the animation
+  overrides while running and the binding restores on stop — never imperatively reset opacity in
+  `onXxxChanged`. See basecamp-skill `qml-animation-value-source-vs-binding`.
