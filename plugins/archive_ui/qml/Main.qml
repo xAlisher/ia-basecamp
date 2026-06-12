@@ -607,37 +607,44 @@ Item {
                 }
                 Repeater {
                     model: channelsModel
-                    RowLayout {
-                        Layout.fillWidth: true; spacing: 8
-                        Label {
-                            Layout.fillWidth: true
-                            text: (model.name || root.shortId(model.channelId) || "channel")
-                                  + "  ·  " + (model.synced ? "synced" : "syncing " + (model.progress >= 0 ? model.progress + "%" : "…"))
-                                  + "  ·  " + (model.items || 0) + " items"
-                            color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
-                        }
-                        ToolButton {
-                            text: "auto"
-                            onClicked: {
-                                var R = root, id = model.channelId, next = !model.autoPreserve
-                                R.call("setAutoPreserve", [id, next ? "true" : "false"], function(r) {
-                                    if (r && r.ok) R.toast(next ? "Auto-preserve ON" : "Auto-preserve off")
-                                })
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: chRow.implicitHeight + 12
+                        radius: 6; color: root.bgPrimary; border.color: root.borderColor
+                        RowLayout {
+                            id: chRow
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 10; rightMargin: 10 }
+                            spacing: 8
+                            Label {
+                                Layout.fillWidth: true
+                                text: (model.name || root.shortId(model.channelId) || "channel")
+                                      + "  ·  " + (model.synced ? "synced" : "syncing " + (model.progress >= 0 ? model.progress + "%" : "…"))
+                                      + "  ·  " + (model.items || 0) + " items"
+                                color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
                             }
-                            contentItem: Label { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: 11; font.bold: model.autoPreserve }
-                            background: Rectangle { color: "transparent"; radius: 3; border.color: model.autoPreserve ? root.successGreen : root.borderColor }
-                        }
-                        ToolButton {
-                            text: "↻"
-                            onClicked: { var R = root, id = model.channelId; R.call("refreshChannel", [id], function(r){ if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id)) }) }
-                            contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
-                            background: Rectangle { color: "transparent" }
-                        }
-                        ToolButton {
-                            text: "✕"
-                            onClicked: { var R = root, id = model.channelId; R.call("unfollowChannel", [id], function(r){ if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id)) }) }
-                            contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
-                            background: Rectangle { color: "transparent" }
+                            ToolButton {
+                                text: "auto"
+                                onClicked: {
+                                    var R = root, id = model.channelId, next = !model.autoPreserve
+                                    R.call("setAutoPreserve", [id, next ? "true" : "false"], function(r) {
+                                        if (r && r.ok) R.toast(next ? "Auto-preserve ON" : "Auto-preserve off")
+                                    })
+                                }
+                                contentItem: Label { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: 11; font.bold: model.autoPreserve }
+                                background: Rectangle { color: "transparent"; radius: 3; border.color: model.autoPreserve ? root.successGreen : root.borderColor }
+                            }
+                            ToolButton {
+                                text: "↻"
+                                onClicked: { var R = root, id = model.channelId; R.call("refreshChannel", [id], function(r){ if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id)) }) }
+                                contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
+                                background: Rectangle { color: "transparent" }
+                            }
+                            ToolButton {
+                                text: "✕"
+                                onClicked: { var R = root, id = model.channelId; R.call("unfollowChannel", [id], function(r){ if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id)) }) }
+                                contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
+                                background: Rectangle { color: "transparent" }
+                            }
                         }
                     }
                 }
@@ -727,25 +734,19 @@ Item {
                         implicitHeight: itemRow.implicitHeight + 22
                         radius: 8; color: root.bgSecondary; border.color: root.borderColor
 
-                        // ── small red ✕ — remove item (two-click confirm), top-right ──
+                        // ── small red ✕ — only on preserved items (#4); arms a
+                        //    left-side "Remove?" confirm (#3), top-right corner ──
                         ToolButton {
                             id: rmBtn
                             anchors { top: parent.top; right: parent.right; topMargin: 2; rightMargin: 4 }
-                            implicitWidth: armed ? 64 : 22; height: 22; z: 5
+                            width: 22; height: 22; z: 5
+                            visible: model.state === "mirrored"
                             property bool armed: false
-                            text: armed ? "remove?" : "✕"
-                            onClicked: {
-                                if (!armed) { armed = true; rmArm.restart(); return }
-                                armed = false
-                                var R = root, id = model.id, t = model.iaId || model.title
-                                R.call("removeItem", [id], function(r) {
-                                    if (r && r.ok) R.logEvent("config", "Removed " + t)
-                                    else R.toast("Remove failed: " + (r ? r.error : "no response"))
-                                })
-                            }
-                            Timer { id: rmArm; interval: 2500; onTriggered: rmBtn.armed = false }
+                            text: "✕"
+                            onClicked: { armed = true; rmArm.restart() }
+                            Timer { id: rmArm; interval: 3000; onTriggered: rmBtn.armed = false }
                             contentItem: Label { text: parent.text; color: root.errorRed
-                                                 font.pixelSize: rmBtn.armed ? 10 : 13; font.bold: true
+                                                 font.pixelSize: 13; font.bold: true
                                                  horizontalAlignment: Text.AlignHCenter }
                             background: Rectangle { color: "transparent" }
                         }
@@ -754,6 +755,25 @@ Item {
                             id: itemRow
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 30 }
                             spacing: 10
+
+                            // ── #3: red "Remove?" confirm on the far left when ✕ is armed ──
+                            Rectangle {
+                                visible: rmBtn.armed
+                                Layout.preferredWidth: 84; Layout.preferredHeight: 28; Layout.alignment: Qt.AlignVCenter
+                                radius: 6; color: root.errorRed
+                                Label { anchors.centerIn: parent; text: "Remove?"; color: "#ffffff"; font.pixelSize: 12; font.bold: true }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rmBtn.armed = false
+                                        var R = root, id = model.id, t = model.iaId || model.title
+                                        R.call("removeItem", [id], function(r) {
+                                            if (r && r.ok) R.logEvent("config", "Removed " + t)
+                                            else R.toast("Remove failed: " + (r ? r.error : "no response"))
+                                        })
+                                    }
+                                }
+                            }
 
                             // ── LEFT: title + Copy link, then ch / slot / tx ids ──
                             ColumnLayout {
@@ -828,7 +848,7 @@ Item {
                                         : stateW.st === "mirroring" ? ((model.progressBlocks > 0 ? model.progressBlocks : 0) + "%")
                                         : stateW.st === "mirrored" ? "Preserved"
                                         : stateW.st === "error" ? "Error" : stateW.st
-                                    color: stateW.st === "available" ? "#1a1a1a"
+                                    color: stateW.st === "available" ? "#ffffff"
                                          : stateW.st === "mirroring" ? root.warningYellow
                                          : stateW.st === "mirrored" ? root.successGreen
                                          : stateW.st === "error" ? root.errorRed : root.textMuted
