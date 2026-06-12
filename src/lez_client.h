@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 class QNetworkAccessManager;
@@ -42,6 +43,8 @@ public:
         qint64  progressBlocks = 0;   // transient pin progress while state == mirroring
         QString iaId;        // Internet Archive identifier (keeper cid_pin convention)
         QString iaFile;      // file within the IA item — empty = whole item
+        QStringList storedCids;   // #35: per-file Logos Storage CIDs uploaded for this
+                                  // ia_item — what unpreserve unpins (and frees on disk)
     };
 
     // Why-was-it-skipped counters for the last scan — every defensive skip in the
@@ -119,6 +122,8 @@ public:
 
     // mirror bookkeeping (P2 — storage results land back on the item records)
     QString itemCid(const QString& itemId) const;   // empty if unknown
+    QStringList itemStoredCids(const QString& itemId) const;   // #35: ia_item per-file CIDs
+    bool setItemStoredCids(const QString& itemId, const QStringList& cids);   // {} clears
     QString itemState(const QString& itemId) const;
     bool setItemState(const QString& itemId, const QString& state,
                             qint64 progressBlocks = -1);

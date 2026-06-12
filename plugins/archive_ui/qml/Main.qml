@@ -856,7 +856,12 @@ Item {
                                 border.color: (st === "mirroring" || st === "pending") ? root.warningYellow
                                             : st === "mirrored" ? root.successGreen
                                             : st === "error" ? root.errorRed : root.borderColor
-                                onStChanged: if (st !== "mirroring" && st !== "pending") opacity = 1
+                                // #36: dim the Preserve pill while storage is offline — the
+                                // click is already gated, this shows it. The breathing
+                                // animation below overrides opacity while running, then this
+                                // binding is restored (st is no longer available/error).
+                                opacity: ((st === "available" || st === "error")
+                                          && root.storageState !== "ready") ? 0.4 : 1.0
                                 Label {
                                     anchors.centerIn: parent
                                     text: stateW.st === "available" ? "Preserve"
@@ -902,10 +907,14 @@ Item {
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                     onClicked: {
+                                        // #35: unpreserve — delete from storage, reset to
+                                        // Preserve (line stays). Optimistic flip; the 2s
+                                        // poll reconciles if the backend rejects it.
                                         rmBtn.armed = false
                                         var R = root, id = model.id, t = model.iaId || model.title
-                                        R.call("removeItem", [id], function(r) {
-                                            if (r && r.ok) R.logEvent("config", "Removed " + t)
+                                        R.flipItemState(id, "available")
+                                        R.call("unmirrorItem", [id], function(r) {
+                                            if (r && r.ok) R.logEvent("config", "Removed " + t + " from storage")
                                             else R.toast("Remove failed: " + (r ? r.error : "no response"))
                                         })
                                     }

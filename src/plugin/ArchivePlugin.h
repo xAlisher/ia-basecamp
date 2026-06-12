@@ -98,6 +98,7 @@ private:
     StorageClient* m_storage = nullptr;
     QTimer*        m_healthTimer = nullptr;
     QHash<QString, QString> m_cidToItem;   // in-flight pin/unpin → item id
+    QHash<QString, int> m_unpinRemaining;  // #35: itemId → ia_item files still unpinning
     qint64         m_usedBytes = 0;
     QString        m_lastError;
 
@@ -126,6 +127,7 @@ private:
     QString m_iaTmpPath;
     qint64  m_iaTotalBytes = 0;   // #30: byte-weighted progress (Σ files.xml sizes)
     qint64  m_iaDoneBytes = 0;    // bytes from already-completed files
+    QStringList m_iaStoredCids;   // #35: CIDs uploaded this run — persisted on complete
     QPointer<QNetworkReply> m_iaReply;   // #32: in-flight download, for abort
 
     // #15: dev fixture channel until Logos/IA publish official ids

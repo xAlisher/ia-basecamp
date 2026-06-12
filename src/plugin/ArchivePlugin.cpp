@@ -89,6 +89,8 @@ void ArchivePlugin::initLogos(LogosAPI* api)
             }
             qInfo() << "ArchivePlugin: ia_item file stored" << cid
                     << "(" << (m_iaIdx + 1) << "/" << m_iaFiles.size() << ")";
+            if (!cid.isEmpty())               // #35: remember it so Remove can unpin it
+                m_iaStoredCids.append(cid);
             if (m_iaIdx < m_iaFiles.size())   // #30: this file's bytes are now done
                 m_iaDoneBytes += m_iaFiles.at(m_iaIdx).size;
             ++m_iaIdx;
@@ -120,13 +122,21 @@ void ArchivePlugin::initLogos(LogosAPI* api)
     connect(m_storage, &StorageClient::unpinFinished, this,
             [this](const QString& cid, bool unpinOk, const QString& error) {
         const QString itemId = m_cidToItem.take(cid);
-        if (unpinOk) {
-            m_lez->setItemState(itemId, QStringLiteral("available"));
-            m_storage->queryRepoStat();
-        } else {
+        if (itemId.isEmpty())
+            return;
+        if (!unpinOk) {
+            m_unpinRemaining.remove(itemId);   // #35: abandon the multi-file unpin
             m_lez->setItemState(itemId, QStringLiteral("error"));
             m_lastError = error;
+            return;
         }
+        // #35: multi-file ia_item — flip to available only once every file is removed
+        if (m_unpinRemaining.contains(itemId) && --m_unpinRemaining[itemId] > 0)
+            return;
+        m_unpinRemaining.remove(itemId);
+        m_lez->setItemStoredCids(itemId, QStringList());   // nothing stored anymore
+        m_lez->setItemState(itemId, QStringLiteral("available"));
+        m_storage->queryRepoStat();
     });
     connect(m_storage, &StorageClient::repoStatResult, this,
             [this](qint64 usedBytes) { m_usedBytes = usedBytes; });
@@ -531,6 +541,7 @@ void ArchivePlugin::iaFail(const QString& error)
     const QString itemId = m_iaItemId;
     m_iaItemId.clear();
     m_iaFiles.clear();
+    m_iaStoredCids.clear();
     if (!m_iaTmpPath.isEmpty()) {
         QFile::remove(m_iaTmpPath);
         m_iaTmpPath.clear();
@@ -550,6 +561,7 @@ void ArchivePlugin::iaPending(const QString& reason)
     const QString itemId = m_iaItemId;
     m_iaItemId.clear();
     m_iaFiles.clear();
+    m_iaStoredCids.clear();
     if (!m_iaTmpPath.isEmpty()) {
         QFile::remove(m_iaTmpPath);
         m_iaTmpPath.clear();
@@ -581,6 +593,7 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
     m_iaUnverified = 0;
     m_iaTotalBytes = 0;
     m_iaDoneBytes = 0;
+    m_iaStoredCids.clear();   // #35: a fresh run re-uploads (keeper-exact CIDs dedupe)
     m_lez->setItemState(itemId, QStringLiteral("mirroring"), 0);
 
     if (!m_nam)
@@ -625,6 +638,8 @@ void ArchivePlugin::iaNextFile()
         const int total = m_iaFiles.size();
         m_iaItemId.clear();
         m_iaFiles.clear();
+        m_lez->setItemStoredCids(itemId, m_iaStoredCids);   // #35: Remove unpins these
+        m_iaStoredCids.clear();
         m_lez->setItemState(itemId, QStringLiteral("mirrored"));
         m_storage->queryRepoStat();
         qInfo() << "ArchivePlugin: ia_item preserve complete —" << itemId
@@ -746,21 +761,36 @@ QString ArchivePlugin::mirrorItem(const QString& itemId)
 
 QString ArchivePlugin::unmirrorItem(const QString& itemId)
 {
-    const QString cid = m_lez->itemCid(itemId);
-    if (cid.isEmpty())
-        // ia_item entries store one CID per file — unpreserve needs per-file unpin
-        // bookkeeping that doesn't exist yet (deliberate v1 scope; the UI hides
-        // Remove for these rows)
-        return fail(QStringLiteral("unknown_item"));
-    if (m_cidToItem.contains(cid))
-        return fail(QStringLiteral("storage_busy"));
     if (m_storage->storageState() != QLatin1String("ready"))
         return fail(m_storage->storageState() == QLatin1String("starting")
                         ? QStringLiteral("storage_starting")
                         : QStringLiteral("storage_offline"));
-    m_cidToItem.insert(cid, itemId);
-    m_storage->unpin(cid);
-    return ok({ { QStringLiteral("itemId"), itemId } });
+
+    // inscribed rows carry one CID; campaign ia_item rows carry the per-file CIDs we
+    // uploaded (#35) — unpreserve removes every one from Logos Storage and frees the
+    // bytes on disk, then resets the item to available (re-preservable, line stays)
+    QStringList cids;
+    const QString cid = m_lez->itemCid(itemId);
+    if (!cid.isEmpty())
+        cids << cid;
+    else
+        cids = m_lez->itemStoredCids(itemId);
+    if (cids.isEmpty())
+        return fail(QStringLiteral("nothing_stored"));   // never preserved, or a pre-#35 row
+    for (const QString& c : cids)
+        if (m_cidToItem.contains(c))
+            return fail(QStringLiteral("storage_busy"));
+
+    // unpin is synchronous (blocking IPC); the shared unpinFinished handler flips the
+    // item to available once the last file is gone. Insert+unpin per file so each
+    // completion finds its mapping.
+    m_unpinRemaining.insert(itemId, cids.size());
+    for (const QString& c : cids) {
+        m_cidToItem.insert(c, itemId);
+        m_storage->unpin(c);
+    }
+    return ok({ { QStringLiteral("itemId"), itemId },
+                { QStringLiteral("files"), cids.size() } });
 }
 
 QString ArchivePlugin::removeItem(const QString& itemId)
@@ -784,6 +814,7 @@ QString ArchivePlugin::abortPreserve(const QString& itemId)
         m_iaFiles.clear();
         m_iaTotalBytes = 0;
         m_iaDoneBytes = 0;
+        m_iaStoredCids.clear();
         if (m_iaReply) { m_iaReply->abort(); m_iaReply = nullptr; }
         if (!m_iaTmpPath.isEmpty()) { QFile::remove(m_iaTmpPath); m_iaTmpPath.clear(); }
     }
