@@ -353,10 +353,31 @@ QString ArchivePlugin::getChannels()
 
 QString ArchivePlugin::setAutoPreserve(const QString& channelId, const QString& on)
 {
-    if (!m_lez->setAutoPreserve(channelId, on == QLatin1String("true")))
+    const bool turnOn = on == QLatin1String("true");
+    if (!m_lez->setAutoPreserve(channelId, turnOn))
         return fail(QStringLiteral("not_followed"));
+    if (turnOn) {
+        // #25: turning auto on must preserve everything un-preserved in the channel
+        // NOW, not just items discovered after the toggle (auto-preserve otherwise
+        // only fires from itemsDiscovered). Enqueue the already-known available/error
+        // items (under the cap); error items are previously-failed ones, so this also
+        // serves as the manual retry. drainAutoQueue picks them up, one in flight.
+        for (const QJsonValue& v : m_lez->itemsJson(channelId)) {
+            const QJsonObject c = v.toObject();
+            const QString state = c.value(QStringLiteral("state")).toString();
+            if (state != QLatin1String("available") && state != QLatin1String("error"))
+                continue;
+            const qint64 size = c.value(QStringLiteral("sizeBytes")).toVariant().toLongLong();
+            if (size > kAutoPreserveMaxBytes)
+                continue;   // oversize stays manual — same policy as discovery
+            const QString id = c.value(QStringLiteral("id")).toString();
+            if (!id.isEmpty() && !m_autoQueue.contains(id))
+                m_autoQueue.append(id);
+        }
+        drainAutoQueue();
+    }
     return ok({ { QStringLiteral("channelId"), channelId.toLower() },
-                { QStringLiteral("autoPreserve"), on == QLatin1String("true") } });
+                { QStringLiteral("autoPreserve"), turnOn } });
 }
 
 QString ArchivePlugin::getScanDiagnostics(const QString& channelId)
