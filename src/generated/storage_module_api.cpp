@@ -230,8 +230,12 @@ LogosResult StorageModule::uploadUrl(const QString& filePath, int chunkSize) {
     // Pass as QUrl so the server-side StorageModuleProviderObject::uploadUrl(QUrl, int)
     // dispatch path is hit — the QString path goes through QUrl::fromLocalFile which
     // produces a proper file:// URL that the server converts back via toLocalFile().
+    // The storage node intermittently stalls ~10-22s under upload load (ia#23 — node
+    // doesn't crash, just goes briefly unresponsive). The SDK's default Timeout is 20s,
+    // so a stalled-but-recovering upload spuriously fails (storage_upload_failed) and the
+    // preserve aborts. Give uploads room to ride out a stall instead of failing fast.
     QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadUrl",
-        QVariant::fromValue(QUrl::fromLocalFile(filePath)), chunkSize);
+        QVariant::fromValue(QUrl::fromLocalFile(filePath)), chunkSize, Timeout(120000));
     return parseLogosResult(_result);
 }
 
