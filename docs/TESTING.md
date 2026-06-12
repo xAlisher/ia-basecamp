@@ -8,14 +8,17 @@ toggle preserves new (and existing) entries automatically.
 
 ## Prerequisites
 
-- A built Basecamp AppImage with the **fixed zone-sequencer module** (the
-  fresh-channel publish fix, zone-sequencer-rs#3) and the **archive** module
-  installed.
-- A reachable Logos node / gateway (default dev node in `lez_client.cpp`).
+- A built Basecamp (AppImage on Linux, app bundle on macOS) with the **fixed
+  zone-sequencer module** (the fresh-channel publish fix, zone-sequencer-rs#3)
+  and the **archive** module installed. The zone-sequencer fix only matters for
+  *inscribing* (use case 7); following + preserving work without it.
+- A reachable Logos node / gateway — see [Gateway](#gateway) below. The default
+  dev node baked into `lez_client.cpp` is a Tailscale-only host; expect
+  **Gateway offline** until you point the module at a node you can reach.
 - Keycard only needed if you want to *inscribe* new entries via Beacon; **following
   and preserving need no Keycard** (read-only channel reads).
 
-## Install (dev)
+## Install (dev, Linux)
 
 ```bash
 ./scripts/install-lgx.sh          # builds + installs archive (core) + archive_ui
@@ -27,6 +30,77 @@ pkill -9 -f '[m]ount_logos'; pkill -9 -f '[l]ogos_host_qt'
 Logs: `/tmp/basecamp.log` (stdout) and `~/.local/share/Logos/LogosBasecamp/logs/`.
 ia state: `~/.local/share/ia-archive/state.json`; local storage repo:
 `~/.local/share/ia-archive/storage` (delete to wipe preserved data — Basecamp down).
+
+## Install (dev, macOS / Apple Silicon)
+
+`scripts/install-lgx.sh` is Linux-only (hardcoded `x86_64-linux` targets, GNU
+`find -printf`, AppImage relaunch). On macOS, do the equivalent steps by hand —
+verified working on Apple Silicon:
+
+```bash
+# 1. Build both LGX artifacts (portable variant)
+nix build '.#packages.aarch64-darwin.lgx-portable' -o result-lgx-core
+nix build './plugins/archive_ui#packages.aarch64-darwin.lgx-portable' -o result-lgx-ui
+
+# 2. Get lgpm (build the *portable* CLI so package variants match)
+git clone https://github.com/logos-co/logos-package-manager ../logos-package-manager
+(cd ../logos-package-manager && nix build '.#cli-portable')
+
+# 3. Install into Basecamp's macOS data dir
+LGPM=../logos-package-manager/result/bin/lgpm
+BASE="$HOME/Library/Application Support/Logos/LogosBasecamp"
+"$LGPM" --modules-dir "$BASE/modules" --ui-plugins-dir "$BASE/plugins" \
+    --allow-unsigned install --file result-lgx-core/*.lgx
+"$LGPM" --modules-dir "$BASE/modules" --ui-plugins-dir "$BASE/plugins" \
+    --allow-unsigned install --file result-lgx-ui/*.lgx
+
+# 4. Declare the runtime dependency so storage_module loads first
+#    (same patch install-lgx.sh applies on Linux)
+python3 - <<'PE'
+import json, os
+p = os.path.expanduser("~/Library/Application Support/Logos/LogosBasecamp/modules/archive/manifest.json")
+m = json.load(open(p)); m["dependencies"] = ["storage_module"]
+json.dump(m, open(p, "w"), indent=2)
+PE
+
+# 5. Fully quit Basecamp (Cmd+Q) and relaunch
+```
+
+Notes:
+- No dual-variant merge is needed on macOS — the portable build alone resolves
+  (the merge in `install-lgx.sh` is a Linux dev-cycle workaround).
+- Build lgpm as `cli-portable`, not the dev flavor: the dev flavor selects
+  `darwin-arm64-dev` package variants and fails with a variant mismatch against
+  `lgx-portable` artifacts.
+- macOS paths: logs in `~/Library/Application Support/Logos/LogosBasecamp/logs/`;
+  ia state in `~/Library/Application Support/ia-archive/state.json`
+  (`QStandardPaths::GenericDataLocation`).
+
+## Gateway
+
+The module reads channels through a **synced Logos node's Cryptarchia HTTP API**
+(`/cryptarchia/info` is the health probe behind the offline/ready pill). The
+default dev gateway in `lez_client.cpp` (`100.108.127.3:8080`) is a
+**Tailscale-only host** — unreachable unless you are on that tailnet. As of
+2026-06-10 the public testnet explorer API 502s and the public devnet nodes
+require basic-auth (see `docs/spikes/p0-channel-read.md`), so until a campaign
+gateway exists you need your own synced node.
+
+Point the module at a node you can reach: settings cogwheel → **Gateway node** →
+`http://host:8080` → Set. The pill flips to **ready** once `/cryptarchia/info`
+responds (it must be synced past the channel's start slot — `degraded · lag N`
+means it's still catching up).
+
+If your node's HTTP API port isn't exposed publicly (the default
+`logos-node` docker-compose intentionally does **not** publish 8080), an SSH
+tunnel works:
+
+```bash
+# on your machine; CONTAINER_IP is the node container's docker-network IP
+#   (docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' <container>)
+ssh -N -L 8080:CONTAINER_IP:8080 user@your-server
+# then set the gateway to http://127.0.0.1:8080
+```
 
 ## Test channel (ready, on-chain)
 
