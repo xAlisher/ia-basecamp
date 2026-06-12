@@ -756,25 +756,6 @@ Item {
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 30 }
                             spacing: 10
 
-                            // ── #3: red "Remove?" confirm on the far left when ✕ is armed ──
-                            Rectangle {
-                                visible: rmBtn.armed
-                                Layout.preferredWidth: 84; Layout.preferredHeight: 28; Layout.alignment: Qt.AlignVCenter
-                                radius: 6; color: root.errorRed
-                                Label { anchors.centerIn: parent; text: "Remove?"; color: "#ffffff"; font.pixelSize: 12; font.bold: true }
-                                MouseArea {
-                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        rmBtn.armed = false
-                                        var R = root, id = model.id, t = model.iaId || model.title
-                                        R.call("removeItem", [id], function(r) {
-                                            if (r && r.ok) R.logEvent("config", "Removed " + t)
-                                            else R.toast("Remove failed: " + (r ? r.error : "no response"))
-                                        })
-                                    }
-                                }
-                            }
-
                             // ── LEFT: title + Copy link, then ch / slot / tx ids ──
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -838,25 +819,26 @@ Item {
                                 property string st: model.state || "available"
                                 color: st === "available" ? root.accentOrange : "transparent"
                                 border.width: st === "available" ? 0 : 1
-                                border.color: st === "mirroring" ? root.warningYellow
+                                border.color: (st === "mirroring" || st === "pending") ? root.warningYellow
                                             : st === "mirrored" ? root.successGreen
                                             : st === "error" ? root.errorRed : root.borderColor
-                                onStChanged: if (st !== "mirroring") opacity = 1
+                                onStChanged: if (st !== "mirroring" && st !== "pending") opacity = 1
                                 Label {
                                     anchors.centerIn: parent
                                     text: stateW.st === "available" ? "Preserve"
                                         : stateW.st === "mirroring" ? ((model.progressBlocks > 0 ? model.progressBlocks : 0) + "%")
+                                        : stateW.st === "pending" ? "Pending"
                                         : stateW.st === "mirrored" ? "Preserved"
                                         : stateW.st === "error" ? "Error" : stateW.st
                                     color: stateW.st === "available" ? "#ffffff"
-                                         : stateW.st === "mirroring" ? root.warningYellow
+                                         : (stateW.st === "mirroring" || stateW.st === "pending") ? root.warningYellow
                                          : stateW.st === "mirrored" ? root.successGreen
                                          : stateW.st === "error" ? root.errorRed : root.textMuted
                                     font.pixelSize: 12; font.bold: true
                                 }
-                                // softly breathing while in-progress
+                                // softly breathing while in-progress or pending-retry
                                 SequentialAnimation on opacity {
-                                    running: stateW.st === "mirroring"
+                                    running: stateW.st === "mirroring" || stateW.st === "pending"
                                     loops: Animation.Infinite
                                     NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine }
                                     NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutSine }
@@ -872,6 +854,25 @@ Item {
                                         R.call("mirrorItem", [id], function(r) {
                                             if (r && r.ok) R.logEvent("mirror", "Preserving " + t)
                                             else { R.flipItemState(id, "available"); R.toast("Preserve failed: " + (r ? r.error : "no response")) }
+                                        })
+                                    }
+                                }
+                            }
+
+                            // ── #3: red "Remove?" confirm on the far right when ✕ is armed ──
+                            Rectangle {
+                                visible: rmBtn.armed
+                                Layout.preferredWidth: 84; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
+                                radius: 6; color: root.errorRed
+                                Label { anchors.centerIn: parent; text: "Remove?"; color: "#ffffff"; font.pixelSize: 12; font.bold: true }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rmBtn.armed = false
+                                        var R = root, id = model.id, t = model.iaId || model.title
+                                        R.call("removeItem", [id], function(r) {
+                                            if (r && r.ok) R.logEvent("config", "Removed " + t)
+                                            else R.toast("Remove failed: " + (r ? r.error : "no response"))
                                         })
                                     }
                                 }

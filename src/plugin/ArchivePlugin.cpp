@@ -82,11 +82,15 @@ void ArchivePlugin::initLogos(LogosAPI* api)
                 m_iaTmpPath.clear();
             }
             if (!upOk) {
-                iaFail(QStringLiteral("storage_upload_failed: ") + error);
+                // #31: storage stalls/goes offline transiently (#23) — don't fail
+                // loudly; mark pending (yellow breathing) and auto-retry when ready
+                iaPending(QStringLiteral("storage_upload_failed: ") + error);
                 return;
             }
             qInfo() << "ArchivePlugin: ia_item file stored" << cid
                     << "(" << (m_iaIdx + 1) << "/" << m_iaFiles.size() << ")";
+            if (m_iaIdx < m_iaFiles.size())   // #30: this file's bytes are now done
+                m_iaDoneBytes += m_iaFiles.at(m_iaIdx).size;
             ++m_iaIdx;
             iaNextFile();
             return;
@@ -245,9 +249,10 @@ void ArchivePlugin::drainAutoQueue()
         return;
     while (!m_autoQueue.isEmpty()) {
         const QString id = m_autoQueue.takeFirst();
-        if (m_lez->itemState(id) != QLatin1String("available")) {
-            qInfo() << "ArchivePlugin: auto-preserve skipped" << id
-                    << "— already" << m_lez->itemState(id);
+        const QString st = m_lez->itemState(id);
+        // available = new auto item; pending = transient-storage retry (#31)
+        if (st != QLatin1String("available") && st != QLatin1String("pending")) {
+            qInfo() << "ArchivePlugin: auto-preserve skipped" << id << "— already" << st;
             continue;
         }
         qInfo() << "ArchivePlugin: auto-preserving" << id;
@@ -531,6 +536,27 @@ void ArchivePlugin::iaFail(const QString& error)
     notifyDesktop(QStringLiteral("Preserve failed: %1").arg(itemId), error);
 }
 
+void ArchivePlugin::iaPending(const QString& reason)
+{
+    // #31: transient storage failure (offline/stall) — keep the item recoverable.
+    // Mark it "pending" (yellow breathing in the UI), drop the in-flight download, and
+    // queue it so drainAutoQueue re-preserves it automatically when storage is ready.
+    // No loud "Preserve failed" alarm — this is expected churn, not a real failure.
+    const QString itemId = m_iaItemId;
+    m_iaItemId.clear();
+    m_iaFiles.clear();
+    if (!m_iaTmpPath.isEmpty()) {
+        QFile::remove(m_iaTmpPath);
+        m_iaTmpPath.clear();
+    }
+    m_lez->setItemState(itemId, QStringLiteral("pending"));
+    m_lastError = reason;
+    qInfo() << "ArchivePlugin: ia_item pending — will retry when storage ready —"
+            << itemId << "—" << reason;
+    if (!m_autoQueue.contains(itemId))
+        m_autoQueue.append(itemId);
+}
+
 void ArchivePlugin::notifyDesktop(const QString& summary, const QString& body)
 {
     // notify-send IS org.freedesktop.Notifications over D-Bus; using the binary
@@ -548,6 +574,8 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
     m_iaFiles.clear();
     m_iaIdx = 0;
     m_iaUnverified = 0;
+    m_iaTotalBytes = 0;
+    m_iaDoneBytes = 0;
     m_lez->setItemState(itemId, QStringLiteral("mirroring"), 0);
 
     if (!m_nam)
@@ -573,7 +601,12 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
             iaFail(QStringLiteral("ia_manifest_unparseable_or_empty"));
             return;
         }
-        qInfo() << "ArchivePlugin: ia_item manifest lists" << m_iaFiles.size() << "files";
+        m_iaDoneBytes = 0;
+        m_iaTotalBytes = 0;
+        for (const IaFileEntry& f : m_iaFiles)   // #30: byte-weighted progress
+            m_iaTotalBytes += f.size;
+        qInfo() << "ArchivePlugin: ia_item manifest lists" << m_iaFiles.size() << "files,"
+                << m_iaTotalBytes << "bytes";
         iaNextFile();
     });
 }
@@ -629,9 +662,14 @@ void ArchivePlugin::iaNextFile()
             [this, itemId](qint64 recv, qint64 total) {
         if (m_iaItemId != itemId || m_iaFiles.isEmpty())
             return;
-        const int filePct = total > 0 ? int(recv * 100 / total) : 0;
-        m_lez->setItemState(itemId, QStringLiteral("mirroring"),
-                            (m_iaIdx * 100 + filePct) / m_iaFiles.size());
+        int pct;
+        if (m_iaTotalBytes > 0)   // #30: byte-weighted — smooth, work-proportional
+            pct = int((m_iaDoneBytes + recv) * 100 / m_iaTotalBytes);
+        else {                    // fallback when files.xml carries no sizes
+            const int filePct = total > 0 ? int(recv * 100 / total) : 0;
+            pct = (m_iaIdx * 100 + filePct) / m_iaFiles.size();
+        }
+        m_lez->setItemState(itemId, QStringLiteral("mirroring"), pct);
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, out, entry, tmpPath] {
         out->close();

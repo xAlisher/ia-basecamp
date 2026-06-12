@@ -114,12 +114,15 @@ private:
     void startIaPreserve(const QString& itemId, const QString& iaId);
     void iaNextFile();
     void iaFail(const QString& error);
+    void iaPending(const QString& reason);   // #31: transient storage failure → pending + auto-retry
     QString m_iaItemId;             // "" = idle
     QString m_iaIaId;
     QList<IaFileEntry> m_iaFiles;
     int m_iaIdx = 0;
     int m_iaUnverified = 0;
     QString m_iaTmpPath;
+    qint64  m_iaTotalBytes = 0;   // #30: byte-weighted progress (Σ files.xml sizes)
+    qint64  m_iaDoneBytes = 0;    // bytes from already-completed files
 
     // #15: dev fixture channel until Logos/IA publish official ids
     static constexpr const char* kOfficialCampaignChannel =
