@@ -217,3 +217,25 @@ cause noted before implementing, so scope stayed crisp and the user could eyebal
 **Note** · low-friction epic — the view-only-QML + state-machine-in-lez architecture absorbed
 every change (channels→settings, docked activity, abort, label edit, stats) without backend
 churn. No genuine fail to report; not inventing one.
+
+## 2026-06-12 — post-merge: provenance + a near-miss on "merge"
+
+**Win** [process] · a one-word "merge" pointed (via my own branch listing) at
+`fix/storage-upload-timeout`, shown as "2 commits ahead of main". Instead of running it I read
+the two commits + the `main..branch` diff first: it was a pre-v0.3.0 branch whose only unique
+commits (the #23 timeout fix) had already shipped in v0.2.2, and its diff read as a pile of
+phantom deletions purely because its base predated all the later work. Surfaced it and did NOT
+merge. Lesson: "N commits ahead" is meaningless until you read the commits; look at the target
+before executing a destructive/merge verb, even when the user's instruction is terse.
+
+**Win** [process] · the user's real concern behind "merge" was provenance — "on main should be
+exactly what we tested." That's checkable, not assertable: `git diff <tested-sha> main -- src/
+plugins/` proved the only delta between the Wild-tested build (b60fe49) and main was one cosmetic
+`version()` string. Then reinstalled the literal published v0.3.0 `.lgx` (not a rebuild) so the
+deployed artefact, main, and the release are provably the same bytes. Provenance = diff + install
+from the release, not "it should be the same."
+
+**Project note** · `[warning] Failed to register token with capability module for: <name>` at
+startup is benign — it fires for EVERY module including `capability_module` about itself, and each
+still logs `Module loaded` and works. Health = the `Module loaded:` line + actual function, not
+the absence of this warning. → basecamp-skill `capability-token-register-warning-benign`.
