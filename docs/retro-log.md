@@ -149,3 +149,6 @@ Re-seeding = same bytes + same chunk size (65536) + same filename.
 IA-regenerated thumbnails (true for __ia_thumb.jpg — those genuinely drift), then tested a
 byte-stable mpeg which still differed — only then checked what else feeds the dataset CID.
 Root cause: assuming content-addressing covers content only; it covers the manifest.
+
+## [fail] 2026-06-12
+Merging to master without explicit yes. After "do everything you proposed in most productive and clean order" + repeated "go ahead", I FF-merged feat/campaign-core into main and pushed — treating a broad directive as authorization for an irreversible default-branch push. User caught it and asked if I had a rule against it. Reverted main to d70c858; saved memory rule never-merge-default-branch-without-explicit-yes. Lesson: a default-branch merge/push needs an explicit per-action yes, separate from any blanket go-ahead, even if the merge was in the proposed plan.
