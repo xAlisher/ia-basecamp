@@ -1,6 +1,6 @@
 {
   "name": "archive",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "core",
   "category": "storage",
   "description": "Follow curated archive channels (Logos Execution Zone) and help preserve their collections to Storage. Pure HTTP client \u2014 no platform deps, builds on Mac/Win/Linux.",
