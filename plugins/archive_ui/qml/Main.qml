@@ -616,11 +616,34 @@ Item {
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 10; rightMargin: 10 }
                             spacing: 8
                             Label {
+                                visible: !chEdit.visible
                                 Layout.fillWidth: true
                                 text: (model.name || root.shortId(model.channelId) || "channel")
                                       + "  ·  " + (model.synced ? "synced" : "syncing " + (model.progress >= 0 ? model.progress + "%" : "…"))
                                       + "  ·  " + (model.items || 0) + " items"
                                 color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
+                            }
+                            DarkField {
+                                id: chEdit                 // #33: custom channel label
+                                visible: false
+                                Layout.fillWidth: true
+                                font.pixelSize: 11
+                                placeholderText: "custom label"
+                                onAccepted: {
+                                    var R = root, id = model.channelId, t = text
+                                    visible = false
+                                    R.call("setChannelLabel", [id, t], function(r) {
+                                        if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
+                                    })
+                                }
+                                Keys.onEscapePressed: visible = false
+                            }
+                            ToolButton {                   // #33: ✎ edit label
+                                text: "✎"
+                                visible: !chEdit.visible
+                                onClicked: { chEdit.text = model.label || model.name || ""; chEdit.visible = true; chEdit.forceActiveFocus() }
+                                contentItem: Label { text: parent.text; color: root.textMuted; font.pixelSize: 12 }
+                                background: Rectangle { color: "transparent" }
                             }
                             ToolButton {
                                 text: "auto"
@@ -740,10 +763,21 @@ Item {
                             id: rmBtn
                             anchors { top: parent.top; right: parent.right; topMargin: 2; rightMargin: 4 }
                             width: 22; height: 22; z: 5
-                            visible: model.state === "mirrored"
+                            // #32: also show during mirroring/pending (press = abort)
+                            visible: model.state === "mirrored" || model.state === "mirroring" || model.state === "pending"
                             property bool armed: false
                             text: "✕"
-                            onClicked: { armed = true; rmArm.restart() }
+                            onClicked: {
+                                if (model.state === "mirroring" || model.state === "pending") {
+                                    var R = root, id = model.id, t = model.iaId || model.title
+                                    R.flipItemState(id, "available")   // instant reset
+                                    R.call("abortPreserve", [id], function(r) {
+                                        if (r && r.ok) R.toast("Aborted " + t)
+                                    })
+                                } else {                                // mirrored → confirm remove
+                                    armed = true; rmArm.restart()
+                                }
+                            }
                             Timer { id: rmArm; interval: 3000; onTriggered: rmBtn.armed = false }
                             contentItem: Label { text: parent.text; color: root.errorRed
                                                  font.pixelSize: 13; font.bold: true

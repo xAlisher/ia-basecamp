@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QVariantList>
@@ -13,6 +14,7 @@
 
 class LogosAPI;
 class QNetworkAccessManager;
+class QNetworkReply;
 class QTimer;
 class LezClient;
 class StorageClient;
@@ -67,6 +69,7 @@ public:
     Q_INVOKABLE QString mirrorItem(const QString& itemId);
     Q_INVOKABLE QString unmirrorItem(const QString& itemId);
     Q_INVOKABLE QString removeItem(const QString& itemId);   // #29: forget a single item
+    Q_INVOKABLE QString abortPreserve(const QString& itemId);   // #32: cancel in-flight/pending preserve
     Q_INVOKABLE QString getMirrorStatus(const QString& itemId);
 
     // ── share cards (SPEC §12) ───────────────────────────────────────────────
@@ -123,6 +126,7 @@ private:
     QString m_iaTmpPath;
     qint64  m_iaTotalBytes = 0;   // #30: byte-weighted progress (Σ files.xml sizes)
     qint64  m_iaDoneBytes = 0;    // bytes from already-completed files
+    QPointer<QNetworkReply> m_iaReply;   // #32: in-flight download, for abort
 
     // #15: dev fixture channel until Logos/IA publish official ids
     static constexpr const char* kOfficialCampaignChannel =

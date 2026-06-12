@@ -268,7 +268,10 @@ QString ArchivePlugin::getStatus()
     if (!m_lez)
         return fail(QStringLiteral("not_initialized"));
     QJsonObject summary = m_lez->summaryJson();
-    summary.insert(QStringLiteral("usedBytes"), m_usedBytes);
+    // #34: the counter reflects what you're preserving — when nothing is tracked
+    // (e.g. after Remove all), don't surface orphaned storage bytes as "0 items · X"
+    const bool nothingPreserved = summary.value(QStringLiteral("mirrored")).toInt() == 0;
+    summary.insert(QStringLiteral("usedBytes"), nothingPreserved ? qint64(0) : m_usedBytes);
     const auto gws = m_lez->gateways();
     const QString activeUrl =
         gws.isEmpty() ? QString() : gws.at(m_lez->activeGateway()).nodeUrl;
@@ -350,6 +353,8 @@ QString ArchivePlugin::removeAllItems()
     const QStringList ids = m_lez->followedChannelIds();
     for (const QString& id : ids)
         m_lez->unfollowChannel(id);
+    m_autoQueue.clear();   // #31: drop any pending retries
+    m_usedBytes = 0;       // #34: nothing tracked → counter reads truthful zero
     return ok({ { QStringLiteral("removed"), static_cast<int>(ids.size()) } });
 }
 
@@ -588,6 +593,7 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
     req.setTransferTimeout(30000);
     qInfo() << "ArchivePlugin: ia_item preserve — fetching manifest" << url.toString();
     QNetworkReply* reply = m_nam->get(req);
+    m_iaReply = reply;   // #32: track for abort
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
         if (m_iaItemId.isEmpty())
@@ -645,6 +651,7 @@ void ArchivePlugin::iaNextFile()
                      QNetworkRequest::NoLessSafeRedirectPolicy);
     req.setTransferTimeout(30000);
     QNetworkReply* reply = m_nam->get(req);
+    m_iaReply = reply;   // #32: track for abort
 
     // keeper-exact temp naming — reproduces keeper's per-file dataset CIDs
     const QString tmpPath = QDir::tempPath()
@@ -762,6 +769,26 @@ QString ArchivePlugin::removeItem(const QString& itemId)
     // a rescan can resurface it — not an unpreserve). Cheap, no storage bookkeeping.
     if (!m_lez->removeItem(itemId))
         return fail(QStringLiteral("unknown_item"));
+    return ok({ { QStringLiteral("itemId"), itemId } });
+}
+
+QString ArchivePlugin::abortPreserve(const QString& itemId)
+{
+    // #32: cancel an in-flight (mirroring) or queued (pending) preserve and reset the
+    // item to available. Clear m_iaItemId FIRST so the synchronous finished() from
+    // abort() bails (every handler checks it) — storage finishes its current op
+    // harmlessly and isn't left busy, so the next preserve can start cleanly.
+    m_autoQueue.removeAll(itemId);   // drop a pending retry
+    if (m_iaItemId == itemId) {
+        m_iaItemId.clear();
+        m_iaFiles.clear();
+        m_iaTotalBytes = 0;
+        m_iaDoneBytes = 0;
+        if (m_iaReply) { m_iaReply->abort(); m_iaReply = nullptr; }
+        if (!m_iaTmpPath.isEmpty()) { QFile::remove(m_iaTmpPath); m_iaTmpPath.clear(); }
+    }
+    m_lez->setItemState(itemId, QStringLiteral("available"));
+    qInfo() << "ArchivePlugin: preserve aborted —" << itemId;
     return ok({ { QStringLiteral("itemId"), itemId } });
 }
 
