@@ -586,6 +586,62 @@ Item {
                             function(r) { if (r && r.ok) root.logEvent("config", "Gateway set: " + nodeUrlField.text) })
                     }
                 }
+                // ── Channels (#26) — follow + manage from Settings ──────────────
+                Label { text: "Channels"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 6
+                    DarkField {
+                        id: followField
+                        Layout.fillWidth: true
+                        placeholderText: "channel id, id@startSlot, or explorer URL"
+                        onAccepted: followBtn.clicked()
+                    }
+                    AccentButton {
+                        id: followBtn
+                        text: "Follow"
+                        enabled: followField.text.length > 0
+                        onClicked: root.call("followChannel", [followField.text], function(r) {
+                            if (r && r.ok) { root.logEvent("follow", "Following " + root.shortId(r.channelId)); followField.text = "" }
+                        })
+                    }
+                }
+                Repeater {
+                    model: channelsModel
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        Label {
+                            Layout.fillWidth: true
+                            text: (model.name || root.shortId(model.channelId) || "channel")
+                                  + "  ·  " + (model.synced ? "synced" : "syncing " + (model.progress >= 0 ? model.progress + "%" : "…"))
+                                  + "  ·  " + (model.items || 0) + " items"
+                            color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
+                        }
+                        ToolButton {
+                            text: "auto"
+                            onClicked: {
+                                var R = root, id = model.channelId, next = !model.autoPreserve
+                                R.call("setAutoPreserve", [id, next ? "true" : "false"], function(r) {
+                                    if (r && r.ok) R.toast(next ? "Auto-preserve ON" : "Auto-preserve off")
+                                })
+                            }
+                            contentItem: Label { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: 11; font.bold: model.autoPreserve }
+                            background: Rectangle { color: "transparent"; radius: 3; border.color: model.autoPreserve ? root.successGreen : root.borderColor }
+                        }
+                        ToolButton {
+                            text: "↻"
+                            onClicked: { var R = root, id = model.channelId; R.call("refreshChannel", [id], function(r){ if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id)) }) }
+                            contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
+                            background: Rectangle { color: "transparent" }
+                        }
+                        ToolButton {
+                            text: "✕"
+                            onClicked: { var R = root, id = model.channelId; R.call("unfollowChannel", [id], function(r){ if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id)) }) }
+                            contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
+                            background: Rectangle { color: "transparent" }
+                        }
+                    }
+                }
+
                 // ── Remove all (#24) — forget every followed channel + its items ──
                 Label { text: "Danger zone"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
                 DarkButton {
@@ -639,191 +695,10 @@ Item {
             }
         }
 
-        // ── Tabs ─────────────────────────────────────────────────────────────
-        TabBar {
-            id: tabs
-            Layout.fillWidth: true
-            background: Rectangle { color: root.bgPrimary }
-            Repeater {
-                model: ["Channels", "Items", "Activity"]
-                TabButton {
-                    text: modelData
-                    contentItem: Label {
-                        text: parent.text
-                        color: tabs.currentIndex === index ? root.accentOrange : root.textSecondary
-                        font.pixelSize: 13; font.bold: tabs.currentIndex === index
-                        horizontalAlignment: Text.AlignHCenter
-                    }
-                    background: Rectangle {
-                        color: root.bgPrimary
-                        Rectangle {
-                            anchors.bottom: parent.bottom; width: parent.width; height: 2
-                            color: tabs.currentIndex === index ? root.accentOrange : "transparent"
-                        }
-                    }
-                }
-            }
-        }
-
-        StackLayout {
+        // ── Items (main view) ────────────────────────────────────────────────
+        ColumnLayout {
             Layout.fillWidth: true; Layout.fillHeight: true
-            currentIndex: tabs.currentIndex
-
-            // ── Channels tab ─────────────────────────────────────────────────
-            ColumnLayout {
-                spacing: 8
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    DarkField {
-                        id: followField
-                        Layout.fillWidth: true
-                        placeholderText: "channel id, id@startSlot, or explorer URL"
-                        onAccepted: followBtn.clicked()
-                    }
-                    AccentButton {
-                        id: followBtn
-                        text: "Follow"
-                        enabled: followField.text.length > 0
-                        onClicked: root.call("followChannel", [followField.text], function(r) {
-                            if (r && r.ok) {
-                                root.logEvent("follow", "Following " + root.shortId(r.channelId))
-                                followField.text = ""
-                            }
-                        })
-                    }
-                }
-                ListView {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    model: channelsModel
-                    clip: true
-                    spacing: 6
-                    delegate: Rectangle {
-                        width: ListView.view.width
-                        implicitHeight: chRow.implicitHeight + 20
-                        radius: 8; color: root.bgSecondary; border.color: root.borderColor
-                        RowLayout {
-                            id: chRow
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
-                            spacing: 8
-                            ColumnLayout {
-                                spacing: 2
-                                RowLayout {
-                                    spacing: 6
-                                    Label {
-                                        visible: !labelEdit.visible
-                                        text: model.name || root.shortId(model.channelId) || "channel"
-                                        color: root.textPrimary; font.pixelSize: 13; font.bold: true
-                                    }
-                                    DarkField {
-                                        id: labelEdit
-                                        visible: false
-                                        implicitWidth: 180
-                                        font.pixelSize: 12
-                                        onAccepted: {
-                                            var R = root, id = model.channelId, t = text
-                                            visible = false
-                                            R.call("setChannelLabel", [id, t], function(r) {
-                                                if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
-                                            })
-                                        }
-                                        Keys.onEscapePressed: visible = false
-                                    }
-                                    ToolButton {
-                                        text: "✎"   // label this channel
-                                        visible: !labelEdit.visible
-                                        onClicked: {
-                                            labelEdit.text = model.label || ""
-                                            labelEdit.visible = true
-                                            labelEdit.forceActiveFocus()
-                                        }
-                                        contentItem: Label { text: parent.text; color: root.textMuted; font.pixelSize: 12 }
-                                        background: Rectangle { color: "transparent" }
-                                    }
-                                }
-                                Label {
-                                    text: (model.curator ? "curator " + root.shortId(model.curator) + " · " : "")
-                                          + (model.items || 0) + " items"
-                                    color: root.textSecondary; font.pixelSize: 11
-                                }
-                            }
-                            Item { Layout.fillWidth: true }   // sole expander — pins actions to the edge
-                            // right-aligned action group — consistent gaps
-                            RowLayout {
-                                spacing: 6
-                                Layout.alignment: Qt.AlignVCenter
-                                Rectangle {
-                                    implicitWidth: syncLbl.implicitWidth + 12; implicitHeight: 20; radius: 10
-                                    color: "transparent"; border.color: model.synced ? root.successGreen : root.warningYellow
-                                    Label {
-                                        id: syncLbl; anchors.centerIn: parent
-                                        text: model.synced ? "synced"
-                                              : "syncing " + (model.progress >= 0
-                                                              ? model.progress + "%" : "…")
-                                        color: model.synced ? root.successGreen : root.warningYellow
-                                        font.pixelSize: 10
-                                    }
-                                }
-                                ToolButton {
-                                    // #17: preserve new items from this channel unattended
-                                    text: "auto"
-                                    onClicked: {
-                                        var R = root, id = model.channelId, next = !model.autoPreserve
-                                        R.call("setAutoPreserve", [id, next ? "true" : "false"], function(r) {
-                                            if (r && r.ok) R.toast(next ? "Auto-preserve ON — new items download themselves"
-                                                                        : "Auto-preserve off")
-                                        })
-                                    }
-                                    contentItem: Label {
-                                        text: parent.text
-                                        color: model.autoPreserve ? root.successGreen : root.textMuted
-                                        font.pixelSize: 11; font.bold: model.autoPreserve
-                                    }
-                                    background: Rectangle {
-                                        color: "transparent"; radius: 3
-                                        border.color: model.autoPreserve ? root.successGreen : root.borderColor
-                                    }
-                                }
-                                ToolButton {
-                                    text: "↻"
-                                    enabled: !!model.channelId
-                                    onClicked: {
-                                        var R = root, id = model.channelId
-                                        R.call("refreshChannel", [id], function(r) {
-                                            if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id))
-                                        })
-                                    }
-                                    contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
-                                    background: Rectangle { color: "transparent" }
-                                }
-                                ToolButton {
-                                    text: "✕"
-                                    enabled: !!model.channelId
-                                    onClicked: {
-                                        var R = root, id = model.channelId
-                                        R.call("unfollowChannel", [id], function(r) {
-                                            if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id))
-                                        })
-                                    }
-                                    contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
-                                    background: Rectangle { color: "transparent" }
-                                }
-                            }
-                        }
-                    }
-                    Label {
-                        visible: channelsModel.count === 0
-                        anchors.centerIn: parent
-                        text: "Follow a curated channel to see its items.\nReads need a synced gateway (LEZ#519)."
-                        color: root.textMuted; font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                    }
-                }
-            }
-
-            // ── Items tab ──────────────────────────────────────────────
-            ColumnLayout {
-                spacing: 8
+            spacing: 8
                 // #519 surfaced where it matters: this list may be missing recent inscriptions
                 Rectangle {
                     Layout.fillWidth: true
@@ -849,124 +724,137 @@ Item {
                     spacing: 6
                     delegate: Rectangle {
                         width: ListView.view.width
-                        implicitHeight: colCol.implicitHeight + 20
+                        implicitHeight: itemRow.implicitHeight + 22
                         radius: 8; color: root.bgSecondary; border.color: root.borderColor
-                        ColumnLayout {
-                            id: colCol
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
-                            spacing: 4
-                            RowLayout {
+
+                        // ── small red ✕ — remove item (two-click confirm), top-right ──
+                        ToolButton {
+                            id: rmBtn
+                            anchors { top: parent.top; right: parent.right; topMargin: 2; rightMargin: 4 }
+                            implicitWidth: armed ? 64 : 22; height: 22; z: 5
+                            property bool armed: false
+                            text: armed ? "remove?" : "✕"
+                            onClicked: {
+                                if (!armed) { armed = true; rmArm.restart(); return }
+                                armed = false
+                                var R = root, id = model.id, t = model.iaId || model.title
+                                R.call("removeItem", [id], function(r) {
+                                    if (r && r.ok) R.logEvent("config", "Removed " + t)
+                                    else R.toast("Remove failed: " + (r ? r.error : "no response"))
+                                })
+                            }
+                            Timer { id: rmArm; interval: 2500; onTriggered: rmBtn.armed = false }
+                            contentItem: Label { text: parent.text; color: root.errorRed
+                                                 font.pixelSize: rmBtn.armed ? 10 : 13; font.bold: true
+                                                 horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: "transparent" }
+                        }
+
+                        RowLayout {
+                            id: itemRow
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 30 }
+                            spacing: 10
+
+                            // ── LEFT: title + Copy link, then ch / slot / tx ids ──
+                            ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 8
-                                Label {
+                                spacing: 3
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: model.iaId || model.title || model.cid || "untitled"
-                                    color: root.textPrimary; font.pixelSize: 13; font.bold: true
-                                    elide: Text.ElideRight
-                                }
-                                Rectangle {
-                                    implicitWidth: stLbl.implicitWidth + 12; implicitHeight: 20; radius: 10
-                                    color: "transparent"; border.color: root.mirrorColor(model.state)
+                                    spacing: 10
                                     Label {
-                                        id: stLbl; anchors.centerIn: parent
-                                        text: root.stateLabel(model.state)
-                                              + (model.state === "mirroring" && model.progressBlocks > 0
-                                                 ? " " + model.progressBlocks + "%" : "")
-                                        color: root.mirrorColor(model.state); font.pixelSize: 10
+                                        text: model.iaId || model.title || model.cid || "untitled"
+                                        color: root.textPrimary; font.pixelSize: 13; font.bold: true
+                                        elide: Text.ElideRight; Layout.maximumWidth: 280
                                     }
-                                }
-                                DarkButton {
-                                    text: "Copy IA link"
-                                    enabled: !!model.iaId
-                                    onClicked: {
-                                        root.copyText("https://archive.org/details/" + model.iaId)
-                                        root.toast("Internet Archive link copied")
+                                    Label {
+                                        visible: !!model.iaId
+                                        text: "Copy link"
+                                        color: linkMa.containsMouse ? root.accentOrange : root.textMuted
+                                        font.pixelSize: 11
+                                        MouseArea { id: linkMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: { root.copyText("https://archive.org/details/" + model.iaId); root.toast("Internet Archive link copied") } }
                                     }
+                                    Item { Layout.fillWidth: true }
                                 }
-                                AccentButton {
-                                    visible: model.state !== "mirrored"
-                                    text: "Preserve"
-                                    enabled: model.state !== "mirroring" && !!model.id
-                                             && root.storageState === "ready"
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 14
+                                    Label {
+                                        visible: !!model.channelId
+                                        text: "ch: " + root.shortId(model.channelId)
+                                        color: chMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        MouseArea { id: chMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: { root.copyText(model.channelId); root.toast("Channel id copied") } }
+                                    }
+                                    Label {
+                                        text: "slot: " + (model.inscribedAt || "?")
+                                        color: slotMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        MouseArea { id: slotMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: { root.copyText("" + (model.inscribedAt || "")); root.toast("Slot copied") } }
+                                    }
+                                    Label {
+                                        visible: !!model.txHash
+                                        text: "tx: " + root.shortId(model.txHash)
+                                        color: txMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        MouseArea { id: txMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                var R = root
+                                                var fallback = R.explorerUrl({ blockHash: model.blockHash, txHash: model.txHash })
+                                                R.call("openExplorerTx", [model.txHash, model.blockHash || "", model.txIndex !== undefined ? model.txIndex : -1], function(r) {
+                                                    R.copyText(r && r.url ? r.url : fallback); R.toast("Explorer tx link copied")
+                                                })
+                                            } }
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                }
+                            }
+
+                            // ── RIGHT: fixed-size state widget — identical footprint, colour per state ──
+                            Rectangle {
+                                id: stateW
+                                Layout.preferredWidth: 116; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
+                                radius: 6
+                                property string st: model.state || "available"
+                                color: st === "available" ? root.accentOrange : "transparent"
+                                border.width: st === "available" ? 0 : 1
+                                border.color: st === "mirroring" ? root.warningYellow
+                                            : st === "mirrored" ? root.successGreen
+                                            : st === "error" ? root.errorRed : root.borderColor
+                                onStChanged: if (st !== "mirroring") opacity = 1
+                                Label {
+                                    anchors.centerIn: parent
+                                    text: stateW.st === "available" ? "Preserve"
+                                        : stateW.st === "mirroring" ? ((model.progressBlocks > 0 ? model.progressBlocks : 0) + "%")
+                                        : stateW.st === "mirrored" ? "Preserved"
+                                        : stateW.st === "error" ? "Error" : stateW.st
+                                    color: stateW.st === "available" ? "#1a1a1a"
+                                         : stateW.st === "mirroring" ? root.warningYellow
+                                         : stateW.st === "mirrored" ? root.successGreen
+                                         : stateW.st === "error" ? root.errorRed : root.textMuted
+                                    font.pixelSize: 12; font.bold: true
+                                }
+                                // softly breathing while in-progress
+                                SequentialAnimation on opacity {
+                                    running: stateW.st === "mirroring"
+                                    loops: Animation.Infinite
+                                    NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine }
+                                    NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutSine }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: (stateW.st === "available" || stateW.st === "error") && !!model.id && root.storageState === "ready"
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     onClicked: {
                                         var R = root, t = model.iaId || model.title, id = model.id
-                                        R.flipItemState(id, "mirroring")   // instant feedback
+                                        R.flipItemState(id, "mirroring")
                                         R.toast("Preserving " + t + "…")
                                         R.call("mirrorItem", [id], function(r) {
                                             if (r && r.ok) R.logEvent("mirror", "Preserving " + t)
-                                            else {
-                                                R.flipItemState(id, "available")
-                                                R.toast("Preserve failed: " + (r ? r.error : "no response"))
-                                            }
+                                            else { R.flipItemState(id, "available"); R.toast("Preserve failed: " + (r ? r.error : "no response")) }
                                         })
                                     }
                                 }
-                                DarkButton {
-                                    // ia_item entries (no cid) have per-file CIDs in
-                                    // storage — unpreserve isn't supported for them yet
-                                    visible: model.state === "mirrored" && !!model.cid
-                                    text: "Remove"
-                                    Layout.preferredWidth: 84   // same footprint as Preserve
-                                    enabled: !!model.id && root.storageState === "ready"
-                                    onClicked: {
-                                        var R = root, t = model.iaId || model.title
-                                        R.call("unmirrorItem", [model.id], function(r) {
-                                            if (r && r.ok) { R.logEvent("mirror", "Unpreserving " + t); R.toast("Unpreserved " + t) }
-                                            else R.toast("Unpreserve failed: " + (r ? r.error : "no response"))
-                                        })
-                                    }
-                                }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-                                Label {
-                                    visible: !!model.iaFile
-                                    text: model.iaFile || ""
-                                    color: root.textSecondary; font.pixelSize: 11
-                                    elide: Text.ElideMiddle
-                                    Layout.maximumWidth: 220
-                                }
-                                Label {
-                                    visible: !model.cid && !!model.iaId
-                                    // source, not outcome — verification happens at
-                                    // preserve time and is surfaced then (notification
-                                    // + activity log), not asserted on the idle row
-                                    text: "from archive.org"
-                                    color: root.textMuted; font.pixelSize: 10
-                                }
-                                ToolButton {
-                                    text: "tx " + root.shortId(model.txHash)
-                                    enabled: !!model.txHash
-                                    onClicked: {
-                                        var R = root
-                                        // the backend resolves the explorer's own tx hash
-                                        // (node hash is a dead link there) — copy what it
-                                        // actually opened, block page as the fallback
-                                        var fallback = R.explorerUrl({ blockHash: model.blockHash,
-                                                                       txHash: model.txHash })
-                                        R.call("openExplorerTx",
-                                               [model.txHash, model.blockHash || "",
-                                                model.txIndex !== undefined ? model.txIndex : -1],
-                                               function(r) {
-                                            R.copyText(r && r.url ? r.url : fallback)
-                                            R.toast(r && r.ok ? "Opening in explorer (link copied too)"
-                                                              : "Explorer link copied")
-                                        })
-                                    }
-                                    contentItem: Label { text: parent.text; color: root.accentOrange; font.pixelSize: 11 }
-                                    background: Rectangle { color: "transparent" }
-                                }
-                                Label {
-                                    text: "slot " + (model.inscribedAt || "?")
-                                    color: root.textSecondary; font.pixelSize: 11
-                                }
-                                Label {
-                                    visible: !!model.cid
-                                    text: "CID " + root.shortId(model.cid)
-                                    color: root.textMuted; font.pixelSize: 11
-                                }
-                                Item { Layout.fillWidth: true }
                             }
                         }
                     }
@@ -980,8 +868,10 @@ Item {
                 }
             }
 
-            // ── Activity tab — keycard-basecamp's ActivityLog pattern ────────
+            // ── Activity log — docked at the bottom (keycard ActivityLog) ────
             Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 150
                 color: root.bgPrimary
                 Rectangle {   // top separator
                     anchors { top: parent.top; left: parent.left; right: parent.right }
@@ -1046,7 +936,6 @@ Item {
                 }
             }
         }
-    }
 
     // ── Toast overlay ────────────────────────────────────────────────────────
     Rectangle {

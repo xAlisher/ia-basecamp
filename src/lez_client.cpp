@@ -691,6 +691,24 @@ bool LezClient::setItemState(const QString& itemId, const QString& state,
     return false;
 }
 
+bool LezClient::removeItem(const QString& itemId)
+{
+    // #29: drop a single item from its channel's list. It is on-chain, so a future
+    // rescan can resurface it — a "forget from my view" action, not an unpreserve
+    // (ia_item per-file unpin is unsupported in v1).
+    for (Channel& ch : m_channels) {
+        for (int i = 0; i < ch.items.size(); ++i) {
+            if (ch.items[i].id != itemId)
+                continue;
+            ch.items.remove(i);
+            saveState();
+            emit itemsChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
 // ── persistence ──────────────────────────────────────────────────────────────
 
 QString LezClient::stateFilePath()

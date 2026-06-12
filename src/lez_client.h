@@ -122,6 +122,7 @@ public:
     QString itemState(const QString& itemId) const;
     bool setItemState(const QString& itemId, const QString& state,
                             qint64 progressBlocks = -1);
+    bool removeItem(const QString& itemId);   // #29: forget a single item from its channel
 
     // persistence (one file: gateways, preserveMode, channels+items).
     // loadState returns false when no state file existed — a true first run

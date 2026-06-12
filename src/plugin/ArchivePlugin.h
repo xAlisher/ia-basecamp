@@ -66,6 +66,7 @@ public:
     Q_INVOKABLE QString getItems(const QString& channelId);  // "" = all followed
     Q_INVOKABLE QString mirrorItem(const QString& itemId);
     Q_INVOKABLE QString unmirrorItem(const QString& itemId);
+    Q_INVOKABLE QString removeItem(const QString& itemId);   // #29: forget a single item
     Q_INVOKABLE QString getMirrorStatus(const QString& itemId);
 
     // ── share cards (SPEC §12) ───────────────────────────────────────────────

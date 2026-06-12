@@ -718,6 +718,15 @@ QString ArchivePlugin::unmirrorItem(const QString& itemId)
     return ok({ { QStringLiteral("itemId"), itemId } });
 }
 
+QString ArchivePlugin::removeItem(const QString& itemId)
+{
+    // #29: forget a single item from the followed-channel list (view-level removal;
+    // a rescan can resurface it — not an unpreserve). Cheap, no storage bookkeeping.
+    if (!m_lez->removeItem(itemId))
+        return fail(QStringLiteral("unknown_item"));
+    return ok({ { QStringLiteral("itemId"), itemId } });
+}
+
 QString ArchivePlugin::getMirrorStatus(const QString& itemId)
 {
     const QString state = m_lez->itemState(itemId);
