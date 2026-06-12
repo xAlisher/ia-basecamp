@@ -337,6 +337,17 @@ QString ArchivePlugin::unfollowChannel(const QString& channelId)
     return ok({ { QStringLiteral("channelId"), channelId.toLower() } });
 }
 
+QString ArchivePlugin::removeAllItems()
+{
+    // #24: clean slate — forget every followed channel (which drops its scanned
+    // items). Does NOT unpin from storage (ia_item unpin is unsupported in v1);
+    // this is the no-bookkeeping "reset the view / re-test fresh" path.
+    const QStringList ids = m_lez->followedChannelIds();
+    for (const QString& id : ids)
+        m_lez->unfollowChannel(id);
+    return ok({ { QStringLiteral("removed"), static_cast<int>(ids.size()) } });
+}
+
 QString ArchivePlugin::refreshChannel(const QString& channelId)
 {
     if (!m_lez->refreshChannel(channelId))

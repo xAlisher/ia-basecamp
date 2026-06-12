@@ -55,6 +55,7 @@ public:
     // ── channels (read the LEZ) ──────────────────────────────────────────────
     Q_INVOKABLE QString followChannel(const QString& channelRef);
     Q_INVOKABLE QString unfollowChannel(const QString& channelId);
+    Q_INVOKABLE QString removeAllItems();                       // #24: forget every followed channel + its items
     Q_INVOKABLE QString refreshChannel(const QString& channelId);
     Q_INVOKABLE QString getChannels();                          // {ok, channels:[...]}
     Q_INVOKABLE QString getScanDiagnostics(const QString& channelId);   // last scan's skip counters (#11)

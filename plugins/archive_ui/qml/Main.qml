@@ -340,6 +340,13 @@ Item {
              : s === "mirroring" ? warningYellow
              : s === "error" ? errorRed : textMuted
     }
+    // display label for the internal state machine (#21) — the UI speaks "preserve",
+    // the persisted state strings stay mirroring/mirrored (no migration)
+    function stateLabel(s) {
+        return s === "mirrored" ? "preserved"
+             : s === "mirroring" ? "preserving"
+             : s === "error" ? "failed" : (s || "available")
+    }
 
     Rectangle { anchors.fill: parent; color: root.bgPrimary }
 
@@ -579,6 +586,21 @@ Item {
                             function(r) { if (r && r.ok) root.logEvent("config", "Gateway set: " + nodeUrlField.text) })
                     }
                 }
+                // ── Remove all (#24) — forget every followed channel + its items ──
+                Label { text: "Danger zone"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
+                DarkButton {
+                    id: removeAllBtn
+                    property bool armed: false
+                    text: armed ? "Confirm — remove all items?" : "Remove all items"
+                    onClicked: {
+                        if (!armed) { armed = true; return }
+                        armed = false
+                        root.call("removeAllItems", [], function(r) {
+                            if (r && r.ok) root.logEvent("config", "Removed all items — " + (r.removed || 0) + " channel(s) forgotten")
+                            else root.toast("Remove all failed: " + (r ? r.error : "no response"))
+                        })
+                    }
+                }
             }
         }
 
@@ -610,6 +632,7 @@ Item {
                 AccentButton {
                     Layout.alignment: Qt.AlignVCenter
                     text: "Share"
+                    visible: false   // hidden — share cards out of scope for the campaign UI
                     enabled: (root.summary.mirrored || 0) > 0
                     onClicked: root.shareScope("me")
                 }
@@ -846,7 +869,7 @@ Item {
                                     color: "transparent"; border.color: root.mirrorColor(model.state)
                                     Label {
                                         id: stLbl; anchors.centerIn: parent
-                                        text: (model.state || "available")
+                                        text: root.stateLabel(model.state)
                                               + (model.state === "mirroring" && model.progressBlocks > 0
                                                  ? " " + model.progressBlocks + "%" : "")
                                         color: root.mirrorColor(model.state); font.pixelSize: 10
