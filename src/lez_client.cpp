@@ -96,12 +96,17 @@ void LezClient::pollHealth()
         const QJsonObject info = body.size() <= 1024 * 1024
                                      ? QJsonDocument::fromJson(body).object()
                                      : QJsonObject{};
-        if (!info.contains(QLatin1String("lib_slot"))) {
+        // v0.2 nests chain fields under "cryptarchia_info" (raw node); older/explorer
+        // gateways return them flat. Accept both. "mode" stays top-level.
+        const QJsonObject ci = info.contains(QLatin1String("cryptarchia_info"))
+                                   ? info.value(QLatin1String("cryptarchia_info")).toObject()
+                                   : info;
+        if (!ci.contains(QLatin1String("lib_slot"))) {
             failOver(QStringLiteral("gateway_bad_response"));
             return;
         }
-        const qint64 slot = info.value(QLatin1String("slot")).toVariant().toLongLong();
-        const qint64 lib  = info.value(QLatin1String("lib_slot")).toVariant().toLongLong();
+        const qint64 slot = ci.value(QLatin1String("slot")).toVariant().toLongLong();
+        const qint64 lib  = ci.value(QLatin1String("lib_slot")).toVariant().toLongLong();
         const QString mode = jsonStr(info, "mode");
 
         m_syncLag = qMax<qint64>(0, slot - lib);
@@ -458,7 +463,11 @@ void LezClient::fetchInfoAndScan(const QString& channelId, QObject* ctx, int gat
             return;
         }
         const QJsonObject info = QJsonDocument::fromJson(reply->readAll()).object();
-        const qint64 libSlot = info.value(QLatin1String("lib_slot")).toVariant().toLongLong();
+        // v0.2: chain fields nest under "cryptarchia_info" on the raw node (accept both).
+        const QJsonObject ci = info.contains(QLatin1String("cryptarchia_info"))
+                                   ? info.value(QLatin1String("cryptarchia_info")).toObject()
+                                   : info;
+        const qint64 libSlot = ci.value(QLatin1String("lib_slot")).toVariant().toLongLong();
         if (libSlot <= 0) {
             endScan(channelId, ctx);
             failOver(QStringLiteral("gateway_bad_response"));
