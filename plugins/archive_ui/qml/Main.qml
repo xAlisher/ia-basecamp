@@ -363,11 +363,11 @@ Item {
         }
         background: Rectangle {
             radius: 6; implicitHeight: 32; implicitWidth: 72
-            // a step brighter than any container it sits on (panes are #262626)
-            color: !db.enabled ? "#2A2A2A"
-                 : db.down ? "#1F1F1F"
-                 : db.hovered ? "#4A4A4A" : "#383838"
-            border.color: db.hovered && db.enabled ? "#5A5A5A" : "#4A4A4A"
+            // a step brighter than the backgroundSecondary panes it sits on
+            color: !db.enabled ? Theme.palette.backgroundButton
+                 : db.down ? Theme.palette.surfaceRecessed
+                 : db.hovered ? Theme.palette.hover : Theme.palette.surface
+            border.color: db.hovered && db.enabled ? Theme.palette.borderStrong : Theme.palette.border
             border.width: 1
             Behavior on color { ColorAnimation { duration: 80 } }
         }
@@ -377,15 +377,15 @@ Item {
         hoverEnabled: true
         contentItem: Text {
             text: ab.text; font.pixelSize: 13; font.bold: true
-            color: ab.enabled ? "#FFFFFF" : root.textMuted
+            color: ab.enabled ? root.textPrimary : root.textMuted
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
             radius: 6; implicitHeight: 32; implicitWidth: 84
-            color: !ab.enabled ? "#2A2A2A"
-                 : ab.down ? "#CC4000"
-                 : ab.hovered ? "#FF6A26" : root.accentOrange
-            border.color: ab.enabled ? "transparent" : "#4A4A4A"
+            color: !ab.enabled ? Theme.palette.backgroundButton
+                 : ab.down ? Theme.palette.primaryPressed
+                 : ab.hovered ? Theme.palette.primaryHover : root.accentOrange
+            border.color: ab.enabled ? "transparent" : Theme.palette.border
             border.width: ab.enabled ? 0 : 1
             Behavior on color { ColorAnimation { duration: 80 } }
         }
@@ -422,7 +422,7 @@ Item {
         id: shareCard
         width: 1200; height: 675
         x: -width * 2; y: 0            // parked offscreen; must stay visible for grabToImage
-        color: "#101014"
+        color: Theme.palette.backgroundElevated
         Rectangle {                     // subtle accent frame
             anchors.fill: parent; anchors.margins: 10
             color: "transparent"; border.color: root.accentOrange; border.width: 2; radius: 14
@@ -434,7 +434,7 @@ Item {
                 text: root.shareData && root.shareData.scope !== "me"
                       ? (root.shareData.title || "A item")
                       : "I'm preserving the Internet Archive"
-                color: "#FFFFFF"; font.pixelSize: 44; font.bold: true
+                color: root.textPrimary; font.pixelSize: 44; font.bold: true
                 Layout.fillWidth: true; elide: Text.ElideRight
             }
             RowLayout {
@@ -449,12 +449,12 @@ Item {
                     Label {
                         text: (root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[1] : "GB")
                               + " preserved"
-                        color: "#FFFFFF"; font.pixelSize: 30
+                        color: root.textPrimary; font.pixelSize: 30
                     }
                     Label {
                         text: root.shareData && root.shareData.scope === "me"
                               ? (root.shareData.count || 0) + " items" : "on decentralized Storage"
-                        color: "#A4A4A4"; font.pixelSize: 22
+                        color: root.textSecondary; font.pixelSize: 22
                     }
                 }
                 Item { Layout.fillWidth: true }
@@ -467,7 +467,7 @@ Item {
                     model: root.shareData ? Math.min(6, (root.shareData.items || []).length) : 0
                     Rectangle {
                         implicitWidth: 150; implicitHeight: 110; radius: 10
-                        color: "#1E1E26"; border.color: "#383838"
+                        color: Theme.palette.surfaceRaised; border.color: Theme.palette.borderSubtle
                         clip: true
                         Image {
                             id: thumbImg
@@ -485,7 +485,7 @@ Item {
                         Label {
                             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 6 }
                             text: root.shareData.items[index].name || ""
-                            color: "#FFFFFF"; font.pixelSize: 12; elide: Text.ElideRight
+                            color: root.textPrimary; font.pixelSize: 12; elide: Text.ElideRight
                             visible: thumbImg.status !== Image.Ready
                             horizontalAlignment: Text.AlignHCenter
                         }
@@ -498,7 +498,7 @@ Item {
                 Layout.fillWidth: true
                 Label {
                     text: "preserved & verifiable on the Logos Execution Zone"
-                    color: "#A4A4A4"; font.pixelSize: 20
+                    color: root.textSecondary; font.pixelSize: 20
                 }
                 Item { Layout.fillWidth: true }
                 Label { text: "logos.co"; color: root.accentOrange; font.pixelSize: 20; font.bold: true }
@@ -870,7 +870,7 @@ Item {
                                         : stateW.st === "pending" ? "Pending"
                                         : stateW.st === "mirrored" ? "Preserved"
                                         : stateW.st === "error" ? "Error" : stateW.st
-                                    color: stateW.st === "available" ? "#ffffff"
+                                    color: stateW.st === "available" ? root.textPrimary
                                          : (stateW.st === "mirroring" || stateW.st === "pending") ? root.warningYellow
                                          : stateW.st === "mirrored" ? root.successGreen
                                          : stateW.st === "error" ? root.errorRed : root.textMuted
@@ -904,7 +904,7 @@ Item {
                                 visible: rmBtn.armed
                                 Layout.preferredWidth: 84; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
                                 radius: 6; color: root.errorRed
-                                Label { anchors.centerIn: parent; text: "Remove?"; color: "#ffffff"; font.pixelSize: 12; font.bold: true }
+                                Label { anchors.centerIn: parent; text: "Remove?"; color: root.textPrimary; font.pixelSize: 12; font.bold: true }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                     onClicked: {
@@ -983,9 +983,9 @@ Item {
                     delegate: TextEdit {
                         width: activityList.width
                         text: "[" + model.ts + "] " + model.text
-                        color: model.kind === "error" ? "#f44336"
-                             : (model.kind === "mirror" || model.kind === "share") ? "#4caf50"
-                             : model.kind === "gateway" ? "#ffc107" : "#888888"
+                        color: model.kind === "error" ? root.errorRed
+                             : (model.kind === "mirror" || model.kind === "share") ? root.successGreen
+                             : model.kind === "gateway" ? root.warningYellow : root.textSecondary
                         font.pixelSize: 12
                         font.family: "monospace"
                         wrapMode: TextEdit.WordWrap
@@ -1007,7 +1007,7 @@ Item {
         visible: root.toastText !== ""
         anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 18 }
         width: Math.min(toastLbl.implicitWidth + 28, parent.width - 40); height: 34; radius: 17
-        color: "#E6262626"; border.color: root.borderColor
+        color: Qt.rgba(root.bgSecondary.r, root.bgSecondary.g, root.bgSecondary.b, 0.9); border.color: root.borderColor
         z: 1000
         Label {
             id: toastLbl; anchors.centerIn: parent
