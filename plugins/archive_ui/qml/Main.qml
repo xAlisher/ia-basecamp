@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Logos.Theme // logos-design-system (native on RC3+ Basecamp) — skill: logos-design-system-adoption
+import Logos.Theme    // logos-design-system palette tokens
+import Logos.Controls // logos-design-system components (LogosButton/LogosTextField/LogosBadge) — skill: logos-design-system-adoption
 
 // archive — follow curated LEZ channels, preserve items to Storage.
 // Dark theme matching radio/keeper/stash. Sandbox rules (qml-sandbox-restrictions):
@@ -351,71 +352,11 @@ Item {
 
     Rectangle { anchors.fill: parent; color: root.bgPrimary }
 
-    // ── Styled controls (radio's dark components — default QtQuick chrome
-    //    clashes with the dark theme) ─────────────────────────────────────────
-    component DarkButton: Button {
-        id: db
-        hoverEnabled: true   // not on by default in the Basecamp host — no hover state without it
-        contentItem: Text {
-            text: db.text; font.pixelSize: 13
-            color: !db.enabled ? root.textMuted : root.textPrimary
-            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 6; implicitHeight: 32; implicitWidth: 72
-            // a step brighter than the backgroundSecondary panes it sits on
-            color: !db.enabled ? Theme.palette.backgroundButton
-                 : db.down ? Theme.palette.surfaceRecessed
-                 : db.hovered ? Theme.palette.hover : Theme.palette.surface
-            border.color: db.hovered && db.enabled ? Theme.palette.borderStrong : Theme.palette.border
-            border.width: 1
-            Behavior on color { ColorAnimation { duration: 80 } }
-        }
-    }
-    component AccentButton: Button {
-        id: ab
-        hoverEnabled: true
-        contentItem: Text {
-            text: ab.text; font.pixelSize: 13; font.bold: true
-            color: ab.enabled ? root.textPrimary : root.textMuted
-            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 6; implicitHeight: 32; implicitWidth: 84
-            color: !ab.enabled ? Theme.palette.backgroundButton
-                 : ab.down ? Theme.palette.primaryPressed
-                 : ab.hovered ? Theme.palette.primaryHover : root.accentOrange
-            border.color: ab.enabled ? "transparent" : Theme.palette.border
-            border.width: ab.enabled ? 0 : 1
-            Behavior on color { ColorAnimation { duration: 80 } }
-        }
-    }
-    component DarkField: TextField {
-        property color fieldBg: root.bgSecondary
-        color: root.textPrimary
-        placeholderTextColor: root.textMuted
-        selectionColor: root.accentOrange
-        background: Rectangle {
-            radius: 6; implicitHeight: 32
-            color: parent.fieldBg
-            border.color: parent && parent.activeFocus ? root.accentOrange : root.borderColor
-            border.width: 1
-        }
-    }
-    component DarkRadio: RadioButton {
-        id: dr
-        spacing: 8
-        font.pixelSize: 12
-        palette.windowText: root.textSecondary
-        indicator: Rectangle {
-            implicitWidth: 18; implicitHeight: 18; radius: 9
-            x: dr.leftPadding; y: dr.topPadding + (dr.availableHeight - height) / 2
-            color: "transparent"; border.width: 2
-            border.color: dr.checked ? root.accentOrange : root.textMuted
-            Rectangle { anchors.centerIn: parent; width: 8; height: 8; radius: 4
-                color: root.accentOrange; visible: dr.checked }
-        }
-    }
+    // ── Controls: adopted from logos-design-system (Logos.Controls).
+    //    Neutral LogosButton (delivery-demo convention — primary actions are
+    //    neutral, accent is reserved for status/state), LogosTextField, LogosBadge.
+    //    Semantic-colored glyph buttons (✕/auto/↻) stay custom ToolButtons below:
+    //    LogosToolButton hardcodes its text color and can't express per-state hue.
 
     // ── ShareCard — rendered offscreen at X/Twitter ratio, no PII ────────────
     Rectangle {
@@ -522,28 +463,15 @@ Item {
             }
             Item { Layout.fillWidth: true }
 
-            // Gateway pill — surfaces LEZ#519 lag directly
-            Rectangle {
-                implicitWidth: gwRow.implicitWidth + 16; implicitHeight: 24; radius: 12
-                color: root.bgSecondary; border.color: root.borderColor
-                RowLayout {
-                    id: gwRow; anchors.centerIn: parent; spacing: 5
-                    Rectangle { width: 7; height: 7; radius: 3.5; color: root.stateColor(root.gatewayState) }
-                    Label {
-                        text: "Gateway " + root.gatewayState
-                              + (root.gatewayState === "degraded" ? " · lag " + root.syncLag : "")
-                        color: root.textSecondary; font.pixelSize: 11
-                    }
-                }
+            // Gateway pill — surfaces LEZ#519 lag directly (LogosBadge: state-colored)
+            LogosBadge {
+                text: "Gateway " + root.gatewayState
+                      + (root.gatewayState === "degraded" ? " · lag " + root.syncLag : "")
+                color: root.stateColor(root.gatewayState)
             }
-            Rectangle {
-                implicitWidth: stRow.implicitWidth + 16; implicitHeight: 24; radius: 12
-                color: root.bgSecondary; border.color: root.borderColor
-                RowLayout {
-                    id: stRow; anchors.centerIn: parent; spacing: 5
-                    Rectangle { width: 7; height: 7; radius: 3.5; color: root.stateColor(root.storageState) }
-                    Label { text: "Storage " + root.storageState; color: root.textSecondary; font.pixelSize: 11 }
-                }
+            LogosBadge {
+                text: "Storage " + root.storageState
+                color: root.stateColor(root.storageState)
             }
             ToolButton {
                 text: "⚙"
@@ -573,14 +501,14 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    DarkField {
+                    LogosTextField {
                         id: nodeUrlField
                         Layout.fillWidth: true
-                        fieldBg: root.bgPrimary
                         placeholderText: root.activeGatewayUrl || "node URL — http://gateway:8080"
                     }
-                    DarkButton {
+                    LogosButton {
                         text: "Apply"
+                        implicitWidth: 72; implicitHeight: 40
                         enabled: nodeUrlField.text.length > 0
                         onClicked: root.call("setGateways",
                             [JSON.stringify([{ nodeUrl: nodeUrlField.text }])],
@@ -591,15 +519,17 @@ Item {
                 Label { text: "Channels"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 6
-                    DarkField {
+                    LogosTextField {
                         id: followField
                         Layout.fillWidth: true
                         placeholderText: "channel id, id@startSlot, or explorer URL"
-                        onAccepted: followBtn.clicked()
+                        // LogosTextField has no `accepted` signal — wire the inner TextInput
+                        Connections { target: followField.textInput; function onAccepted() { followBtn.clicked() } }
                     }
-                    AccentButton {
+                    LogosButton {
                         id: followBtn
                         text: "Follow"
+                        implicitWidth: 84; implicitHeight: 40
                         enabled: followField.text.length > 0
                         onClicked: root.call("followChannel", [followField.text], function(r) {
                             if (r && r.ok) { root.logEvent("follow", "Following " + root.shortId(r.channelId)); followField.text = "" }
@@ -624,25 +554,27 @@ Item {
                                       + "  ·  " + (model.items || 0) + " items"
                                 color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
                             }
-                            DarkField {
+                            LogosTextField {
                                 id: chEdit                 // #33: custom channel label
                                 visible: false
                                 Layout.fillWidth: true
-                                font.pixelSize: 11
                                 placeholderText: "custom label"
-                                onAccepted: {
-                                    var R = root, id = model.channelId, t = text
-                                    visible = false
-                                    R.call("setChannelLabel", [id, t], function(r) {
-                                        if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
-                                    })
+                                Connections {
+                                    target: chEdit.textInput
+                                    function onAccepted() {
+                                        var R = root, id = model.channelId, t = chEdit.text
+                                        chEdit.visible = false
+                                        R.call("setChannelLabel", [id, t], function(r) {
+                                            if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
+                                        })
+                                    }
                                 }
-                                Keys.onEscapePressed: visible = false
+                                Keys.onEscapePressed: chEdit.visible = false
                             }
                             ToolButton {                   // #33: ✎ edit label
                                 text: "✎"
                                 visible: !chEdit.visible
-                                onClicked: { chEdit.text = model.label || model.name || ""; chEdit.visible = true; chEdit.forceActiveFocus() }
+                                onClicked: { chEdit.text = model.label || model.name || ""; chEdit.visible = true; chEdit.textInput.forceActiveFocus() }
                                 contentItem: Label { text: parent.text; color: root.textMuted; font.pixelSize: 12 }
                                 background: Rectangle { color: "transparent" }
                             }
@@ -675,10 +607,11 @@ Item {
 
                 // ── Remove all (#24) — forget every followed channel + its items ──
                 Label { text: "Danger zone"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
-                DarkButton {
+                LogosButton {
                     id: removeAllBtn
                     property bool armed: false
                     text: armed ? "Confirm — remove all items?" : "Remove all items"
+                    implicitWidth: 220; implicitHeight: 36
                     onClicked: {
                         if (!armed) { armed = true; return }
                         armed = false
@@ -716,9 +649,10 @@ Item {
                           + " · " + (root.summary.items || 0) + " items"
                     color: root.textSecondary; font.pixelSize: 11
                 }
-                AccentButton {
+                LogosButton {
                     Layout.alignment: Qt.AlignVCenter
                     text: "Share"
+                    implicitWidth: 84; implicitHeight: 32
                     visible: false   // hidden — share cards out of scope for the campaign UI
                     enabled: (root.summary.mirrored || 0) > 0
                     onClicked: root.shareScope("me")
