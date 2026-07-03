@@ -371,28 +371,28 @@ Item {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 56
             spacing: 18
-            Label {
+            LogosText {
                 text: root.shareData && root.shareData.scope !== "me"
                       ? (root.shareData.title || "A item")
                       : "I'm preserving the Internet Archive"
-                color: root.textPrimary; font.pixelSize: 44; font.bold: true
+                color: root.textPrimary; font.pixelSize: 44; font.weight: Theme.typography.weightBold
                 Layout.fillWidth: true; elide: Text.ElideRight
             }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 28
-                Label {
+                LogosText {
                     text: root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[0] : "0"
-                    color: root.accentOrange; font.pixelSize: 120; font.bold: true
+                    color: root.accentOrange; font.pixelSize: 120; font.weight: Theme.typography.weightBold
                 }
                 ColumnLayout {
                     spacing: 4
-                    Label {
+                    LogosText {
                         text: (root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[1] : "GB")
                               + " preserved"
                         color: root.textPrimary; font.pixelSize: 30
                     }
-                    Label {
+                    LogosText {
                         text: root.shareData && root.shareData.scope === "me"
                               ? (root.shareData.count || 0) + " items" : "on decentralized Storage"
                         color: root.textSecondary; font.pixelSize: 22
@@ -417,16 +417,16 @@ Item {
                             fillMode: Image.PreserveAspectCrop
                             visible: status === Image.Ready
                         }
-                        Label {   // placeholder: item initial
+                        LogosText {   // placeholder: item initial
                             anchors.centerIn: parent
                             visible: thumbImg.status !== Image.Ready
                             text: (root.shareData.items[index].name || "?").substring(0, 1).toUpperCase()
-                            color: root.accentOrange; font.pixelSize: 42; font.bold: true
+                            color: root.accentOrange; font.pixelSize: 42; font.weight: Theme.typography.weightBold
                         }
-                        Label {
+                        LogosText {
                             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 6 }
                             text: root.shareData.items[index].name || ""
-                            color: root.textPrimary; font.pixelSize: 12; elide: Text.ElideRight
+                            color: root.textPrimary; font.pixelSize: Theme.typography.secondaryText; elide: Text.ElideRight
                             visible: thumbImg.status !== Image.Ready
                             horizontalAlignment: Text.AlignHCenter
                         }
@@ -437,12 +437,12 @@ Item {
             Item { Layout.fillHeight: true }
             RowLayout {
                 Layout.fillWidth: true
-                Label {
+                LogosText {
                     text: "preserved & verifiable on the Logos Execution Zone"
-                    color: root.textSecondary; font.pixelSize: 20
+                    color: root.textSecondary; font.pixelSize: Theme.typography.panelTitleText
                 }
                 Item { Layout.fillWidth: true }
-                Label { text: "logos.co"; color: root.accentOrange; font.pixelSize: 20; font.bold: true }
+                LogosText { text: "logos.co"; color: root.accentOrange; font.pixelSize: Theme.typography.panelTitleText; font.weight: Theme.typography.weightBold }
             }
         }
     }
@@ -456,10 +456,10 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
-            Label {
+            LogosText {
                 text: "IA → λ"
                 color: root.textPrimary
-                font.pixelSize: 20; font.bold: true
+                font.pixelSize: Theme.typography.panelTitleText; font.weight: Theme.typography.weightBold
             }
             Item { Layout.fillWidth: true }
 
@@ -501,7 +501,7 @@ Item {
                 id: settingsCol
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
                 spacing: 8
-                Label { text: "Gateway node"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
+                LogosText { text: "Gateway node"; color: root.textPrimary; font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.primaryText }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
@@ -520,7 +520,7 @@ Item {
                     }
                 }
                 // ── Channels (#26) — follow + manage from Settings ──────────────
-                Label { text: "Channels"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
+                LogosText { text: "Channels"; color: root.textSecondary; font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.primaryText; topPadding: 6 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 6
                     LogosTextField {
@@ -550,13 +550,13 @@ Item {
                             id: chRow
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 10; rightMargin: 10 }
                             spacing: 8
-                            Label {
+                            LogosText {
                                 visible: !chEdit.visible
                                 Layout.fillWidth: true
                                 text: (model.name || root.shortId(model.channelId) || "channel")
                                       + "  ·  " + (model.synced ? "synced" : "syncing " + (model.progress >= 0 ? model.progress + "%" : "…"))
                                       + "  ·  " + (model.items || 0) + " items"
-                                color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
+                                color: root.textSecondary; font.pixelSize: Theme.typography.secondaryText; elide: Text.ElideRight
                             }
                             LogosTextField {
                                 id: chEdit                 // #33: custom channel label
@@ -579,7 +579,7 @@ Item {
                                 text: "✎"
                                 visible: !chEdit.visible
                                 onClicked: { chEdit.text = model.label || model.name || ""; chEdit.visible = true; chEdit.textInput.forceActiveFocus() }
-                                contentItem: Label { text: parent.text; color: root.textMuted; font.pixelSize: 12 }
+                                contentItem: LogosText { text: parent.text; color: root.textMuted; font.pixelSize: Theme.typography.secondaryText }
                                 background: Rectangle { color: "transparent" }
                             }
                             ToolButton {
@@ -590,19 +590,19 @@ Item {
                                         if (r && r.ok) R.toast(next ? "Auto-preserve ON" : "Auto-preserve off")
                                     })
                                 }
-                                contentItem: Label { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: 11; font.bold: model.autoPreserve }
+                                contentItem: LogosText { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: Theme.typography.secondaryText; font.bold: model.autoPreserve }
                                 background: Rectangle { color: "transparent"; radius: 3; border.color: model.autoPreserve ? root.successGreen : root.borderColor }
                             }
                             ToolButton {
                                 text: "↻"
                                 onClicked: { var R = root, id = model.channelId; R.call("refreshChannel", [id], function(r){ if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id)) }) }
-                                contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
+                                contentItem: LogosText { text: parent.text; color: root.textSecondary; font.pixelSize: Theme.typography.primaryText }
                                 background: Rectangle { color: "transparent" }
                             }
                             ToolButton {
                                 text: "✕"
                                 onClicked: { var R = root, id = model.channelId; R.call("unfollowChannel", [id], function(r){ if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id)) }) }
-                                contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
+                                contentItem: LogosText { text: parent.text; color: root.errorRed; font.pixelSize: Theme.typography.secondaryText }
                                 background: Rectangle { color: "transparent" }
                             }
                         }
@@ -610,7 +610,7 @@ Item {
                 }
 
                 // ── Remove all (#24) — forget every followed channel + its items ──
-                Label { text: "Danger zone"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
+                LogosText { text: "Danger zone"; color: root.textSecondary; font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.primaryText; topPadding: 6 }
                 LogosButton {
                     id: removeAllBtn
                     property bool armed: false
@@ -638,20 +638,20 @@ Item {
                 id: summaryRow
                 anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
                 spacing: 10
-                Label {
+                LogosText {
                     Layout.alignment: Qt.AlignVCenter
                     text: "You're preserving "
                           + (root.summary.mirrored || 0) + " item"
                           + ((root.summary.mirrored || 0) === 1 ? "" : "s")
                           + " · " + root.prettySize(root.summary.usedBytes || 0)
-                    color: root.textPrimary; font.pixelSize: 14; font.bold: true
+                    color: root.textPrimary; font.pixelSize: Theme.typography.primaryText; font.weight: Theme.typography.weightBold
                 }
                 Item { Layout.fillWidth: true }
-                Label {
+                LogosText {
                     Layout.alignment: Qt.AlignVCenter
                     text: "following " + (root.summary.following || 0)
                           + " · " + (root.summary.items || 0) + " items"
-                    color: root.textSecondary; font.pixelSize: 11
+                    color: root.textSecondary; font.pixelSize: Theme.typography.secondaryText
                 }
                 LogosButton {
                     Layout.alignment: Qt.AlignVCenter
@@ -676,14 +676,14 @@ Item {
                     radius: 6; color: root.bgSecondary
                     border.color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
                     clip: true
-                    Label {
+                    LogosText {
                         id: staleLbl
                         anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 10 }
                         text: root.gatewayState === "offline"
                               ? "Gateway unreachable — showing cached items; nothing here is live."
                               : "Gateway is lagging " + root.syncLag + " slots behind the chain — recent inscriptions may be missing."
                         color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
-                        font.pixelSize: 11; wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.typography.secondaryText; wrapMode: Text.WordWrap
                     }
                 }
                 ListView {
@@ -698,30 +698,38 @@ Item {
 
                         // ── small red ✕ — only on preserved items (#4); arms a
                         //    left-side "Remove?" confirm (#3), top-right corner ──
-                        ToolButton {
+                        // ── circular ✕ chip — matches delivery-demo's InfoChip:
+                        //    22×22 circle, backgroundElevated + hairline, glyph centered ──
+                        Rectangle {
                             id: rmBtn
-                            anchors { top: parent.top; right: parent.right; topMargin: 2; rightMargin: 4 }
-                            width: 22; height: 22; z: 5
+                            anchors { top: parent.top; right: parent.right; topMargin: 4; rightMargin: 4 }
+                            width: 22; height: 22; radius: 11; z: 5
                             // #32: also show during mirroring/pending (press = abort)
                             visible: model.state === "mirrored" || model.state === "mirroring" || model.state === "pending"
                             property bool armed: false
-                            text: "✕"
-                            onClicked: {
-                                if (model.state === "mirroring" || model.state === "pending") {
-                                    var R = root, id = model.id, t = model.iaId || model.title
-                                    R.flipItemState(id, "available")   // instant reset
-                                    R.call("abortPreserve", [id], function(r) {
-                                        if (r && r.ok) R.toast("Aborted " + t)
-                                    })
-                                } else {                                // mirrored → confirm remove
-                                    armed = true; rmArm.restart()
-                                }
+                            color: rmMa.containsMouse ? root.bgSecondary : Theme.palette.backgroundElevated
+                            border.width: 1; border.color: Theme.palette.borderHairline
+                            LogosText {
+                                anchors.centerIn: parent
+                                text: "✕"; color: root.errorRed
+                                font.pixelSize: Theme.typography.secondaryText
+                                font.weight: Theme.typography.weightBold
                             }
                             Timer { id: rmArm; interval: 3000; onTriggered: rmBtn.armed = false }
-                            contentItem: Label { text: parent.text; color: root.errorRed
-                                                 font.pixelSize: 13; font.bold: true
-                                                 horizontalAlignment: Text.AlignHCenter }
-                            background: Rectangle { color: "transparent" }
+                            MouseArea {
+                                id: rmMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (model.state === "mirroring" || model.state === "pending") {
+                                        var R = root, id = model.id, t = model.iaId || model.title
+                                        R.flipItemState(id, "available")   // instant reset
+                                        R.call("abortPreserve", [id], function(r) {
+                                            if (r && r.ok) R.toast("Aborted " + t)
+                                        })
+                                    } else {                                // mirrored → confirm remove
+                                        rmBtn.armed = true; rmArm.restart()
+                                    }
+                                }
+                            }
                         }
 
                         RowLayout {
@@ -736,16 +744,16 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 10
-                                    Label {
+                                    LogosText {
                                         text: model.iaId || model.title || model.cid || "untitled"
-                                        color: root.textPrimary; font.pixelSize: 13; font.bold: true
+                                        color: root.textPrimary; font.pixelSize: Theme.typography.primaryText; font.weight: Theme.typography.weightBold
                                         elide: Text.ElideRight; Layout.maximumWidth: 280
                                     }
-                                    Label {
+                                    LogosText {
                                         visible: !!model.iaId
                                         text: "Copy link"
                                         color: linkMa.containsMouse ? root.accentOrange : root.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: linkMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: { root.copyText("https://archive.org/details/" + model.iaId); root.toast("Internet Archive link copied") } }
                                     }
@@ -754,23 +762,23 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 14
-                                    Label {
+                                    LogosText {
                                         visible: !!model.channelId
                                         text: "ch: " + root.shortId(model.channelId)
-                                        color: chMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        color: chMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: chMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: { root.copyText(model.channelId); root.toast("Channel id copied") } }
                                     }
-                                    Label {
+                                    LogosText {
                                         text: "slot: " + (model.inscribedAt || "?")
-                                        color: slotMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        color: slotMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: slotMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: { root.copyText("" + (model.inscribedAt || "")); root.toast("Slot copied") } }
                                     }
-                                    Label {
+                                    LogosText {
                                         visible: !!model.txHash
                                         text: "tx: " + root.shortId(model.txHash)
-                                        color: txMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        color: txMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: txMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: {
                                                 var R = root
@@ -788,7 +796,7 @@ Item {
                             Rectangle {
                                 id: stateW
                                 Layout.preferredWidth: 116; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
-                                radius: 6
+                                radius: Theme.spacing.radiusXlarge   // pill, matching LogosButton
                                 property string st: model.state || "available"
                                 color: st === "available" ? root.accentOrange : "transparent"
                                 border.width: st === "available" ? 0 : 1
@@ -801,7 +809,7 @@ Item {
                                 // binding is restored (st is no longer available/error).
                                 opacity: ((st === "available" || st === "error")
                                           && root.storageState !== "ready") ? 0.4 : 1.0
-                                Label {
+                                LogosText {
                                     anchors.centerIn: parent
                                     text: stateW.st === "available" ? "Preserve"
                                         : stateW.st === "mirroring" ? ((model.progressBlocks > 0 ? model.progressBlocks : 0) + "%")
@@ -812,7 +820,7 @@ Item {
                                          : (stateW.st === "mirroring" || stateW.st === "pending") ? root.warningYellow
                                          : stateW.st === "mirrored" ? root.successGreen
                                          : stateW.st === "error" ? root.errorRed : root.textMuted
-                                    font.pixelSize: 12; font.bold: true
+                                    font.pixelSize: Theme.typography.secondaryText; font.weight: Theme.typography.weightBold
                                 }
                                 // softly breathing while in-progress or pending-retry
                                 SequentialAnimation on opacity {
@@ -841,8 +849,8 @@ Item {
                             Rectangle {
                                 visible: rmBtn.armed
                                 Layout.preferredWidth: 84; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
-                                radius: 6; color: root.errorRed
-                                Label { anchors.centerIn: parent; text: "Remove?"; color: root.textPrimary; font.pixelSize: 12; font.bold: true }
+                                radius: Theme.spacing.radiusXlarge; color: root.errorRed
+                                LogosText { anchors.centerIn: parent; text: "Remove?"; color: root.textPrimary; font.pixelSize: Theme.typography.secondaryText; font.weight: Theme.typography.weightBold }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                     onClicked: {
@@ -861,11 +869,11 @@ Item {
                             }
                         }
                     }
-                    Label {
+                    LogosText {
                         visible: itemsModel.count === 0
                         anchors.centerIn: parent
                         text: "No items yet — follow a channel first."
-                        color: root.textMuted; font.pixelSize: 12
+                        color: root.textMuted; font.pixelSize: Theme.typography.secondaryText
                         horizontalAlignment: Text.AlignHCenter
                     }
                 }
@@ -924,17 +932,17 @@ Item {
                         color: model.kind === "error" ? root.errorRed
                              : (model.kind === "mirror" || model.kind === "share") ? root.successGreen
                              : model.kind === "gateway" ? root.warningYellow : root.textSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.typography.secondaryText
                         font.family: "monospace"
                         wrapMode: TextEdit.WordWrap
                         readOnly: true
                         selectByMouse: true
                     }
-                    Label {
+                    LogosText {
                         visible: activityModel.count === 0
                         anchors.centerIn: parent
                         text: "Follows, preserves and gateway events appear here."
-                        color: root.textMuted; font.pixelSize: 12
+                        color: root.textMuted; font.pixelSize: Theme.typography.secondaryText
                     }
                 }
             }
@@ -947,9 +955,9 @@ Item {
         width: Math.min(toastLbl.implicitWidth + 28, parent.width - 40); height: 34; radius: 17
         color: Qt.rgba(root.bgSecondary.r, root.bgSecondary.g, root.bgSecondary.b, 0.9); border.color: root.borderColor
         z: 1000
-        Label {
+        LogosText {
             id: toastLbl; anchors.centerIn: parent
-            text: root.toastText; color: root.textPrimary; font.pixelSize: 12
+            text: root.toastText; color: root.textPrimary; font.pixelSize: Theme.typography.secondaryText
             elide: Text.ElideMiddle; width: Math.min(implicitWidth, parent.width - 24)
             horizontalAlignment: Text.AlignHCenter
         }
