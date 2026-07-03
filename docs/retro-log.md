@@ -239,3 +239,46 @@ from the release, not "it should be the same."
 startup is benign — it fires for EVERY module including `capability_module` about itself, and each
 still logs `Module loaded` and works. Health = the `Module loaded:` line + actual function, not
 the absence of this warning. → basecamp-skill `capability-token-register-warning-benign`.
+
+## 2026-07-04 — design-system adoption epic (feat/design-system-ui → v0.2.0)
+
+Adopted logos-design-system across `archive_ui` at all three layers, benchmarked against the
+delivery-demo module: palette tokens (0 hex) → Logos.Controls components → LogosText typography.
+7 commits, merged `e8d70ee`, net −42 lines (adoption deletes hand-rolled code). Version realigned
+0.3.0 → 0.2.0 to track Basecamp v0.2.0 for the DWeb Camp talk (#40).
+
+**Win** [process] · the render-verify loop earned its keep on every commit: `qml -I <design-system>/src/qml`
++ a Loader harness (driving root props/models to seed offline/states/items) caught two real defects
+*before* they shipped — a header that overflowed 560px and clipped the cog, and (below) the
+bundler-dropped icon. Observe-before-claim, not "should render."
+
+**Fail** [project] · shipped a loose `qml/icons/settings.svg` referenced by `LogosIconButton { iconSource:
+Qt.resolvedUrl("icons/settings.svg") }`. The standalone `qml -I` render showed the gear perfectly, so I
+nearly committed it as done. Only `tar tzf …/*.lgx | grep svg` revealed nix-bundle-lgx ships **only the
+view file** (Main.qml) — the loose svg was dropped → blank cog in the real host. Root cause: the standalone
+render loads Main.qml **from source**, where the loose asset exists, so it gives false confidence that the
+*packaged* artefact will work. Render-from-source ≠ packaged .lgx. Fix: inline the SVG as a `data:` URI
+(self-contained, ships with Main.qml). → amends `lgx-bundles-only-view-and-metadata-icon`.
+
+**Fail** [process] · claimed "nix build .#lgx exit 0" as QML verification on two early commits before
+realizing the repo-root `.#lgx` builds the **C++ core module**, not the QML (the plugin is a separate
+flake, `plugins/archive_ui`), and even that only **copies** the QML — neither validates it. Root cause:
+assumed the root lgx target packages everything; didn't inspect the derivation until the svg hunt forced
+it. No real harm (qmllint -I + render were the actual gates and I ran them), but the claim was imprecise.
+Lesson: for a view-only ui_qml module, the QML gate is qmllint + render — never the build. → new skill
+`nix-build-doesnt-validate-viewonly-qml`.
+
+**Fail** [project] · `LogosIconButton` tints its icon via `MultiEffect` (a GPU shader); my headless render
+env used `QT_QUICK_BACKEND=software`, which renders the icon **blank**. Wasted one render cycle before
+switching to GL-on-llvmpipe (drop the software backend, keep `LIBGL_ALWAYS_SOFTWARE=1`). → amends
+`qml-standalone-preview-loop`.
+
+**Win** [process] · grounded each component in a **sibling module's proven usage** before applying, not
+component-source guessing: delivery-demo for LogosButton/LogosBadge/InfoChip conventions, receiver_ui for
+the settings-gear pattern (glyph-in-framed-box when Logos.Icons ships no gear). The design system has no
+accent-filled button and no gear icon — both gaps were already solved in sibling modules.
+
+**Project note** · `qml-design-tokens-verify` held again: verified all 11 `Theme.palette.*` names against
+`DarkTheme.qml`/`ColorPalette.qml` source before use — a wrong token renders silent-white, and neither
+qmllint nor the .lgx build catches it. Component/typography tokens (`Theme.spacing.*`, `Theme.typography.*`)
+same discipline.

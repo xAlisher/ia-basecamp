@@ -72,3 +72,31 @@ See SPEC.md for the design. Key facts:
   value source) and dim-when-offline (#36). Express the dim as a declarative binding; the animation
   overrides while running and the binding restores on stop — never imperatively reset opacity in
   `onXxxChanged`. See basecamp-skill `qml-animation-value-source-vs-binding`.
+
+## Design-system adoption (v0.2.0 — 2026-07-04, #40)
+
+`archive_ui` fully adopts `logos-design-system`, benchmarked against the **delivery-demo** reference
+module, at all three layers: **palette** (`Theme.palette.*`, zero hex) → **components**
+(`Logos.Controls`) → **typography** (`LogosText` + `Theme.typography.*`, publicSans). Net −42 lines.
+
+- **Verifying a QML change:** the build is NOT a gate. Repo-root `nix build .#lgx` builds the C++
+  **core**; `plugins/archive_ui#lgx` only **copies** the QML. The real gates are
+  `qmllint -I ~/basecamp/refs/logos-design-system/src/qml` + a render
+  (`qml -I <ds> harness.qml` on GL). See basecamp-skill `nix-build-doesnt-validate-viewonly-qml`.
+- **Settings gear = inline `data:` URI.** `LogosIconButton` needs an icon URL and `Logos.Icons`
+  ships no gear; a loose `qml/icons/*.svg` is **dropped by nix-bundle-lgx** (ships only Main.qml) →
+  blank cog in the host. The gear SVG is base64-inlined in Main.qml. The standalone render loads
+  from source so it hides this — always `tar tzf *.lgx | grep svg`. → `lgx-bundles-only-view-and-metadata-icon`.
+- **Neutral primary buttons.** The design system has no accent-filled button, so `Follow`/`Apply`/
+  `Remove all` are neutral `LogosButton`s (delivery-demo's "Call" is neutral too). Orange is reserved
+  for the **Preserve state pill** (the CTA) and item-state colours.
+- **Custom-but-on-token state widget.** The item state pill (Preserve/Preserved/%/Error/Pending)
+  stays a custom fixed-footprint `Rectangle` — it morphs across states with semantic colours no
+  component expresses — but uses `Theme.spacing.radiusXlarge` so it reads as the LogosButton family.
+- **Status → `LogosBadge`**, sized the settings cog to `gwBadge.implicitHeight` so header chips match.
+- **Row ✕ = circular chip** mirroring delivery-demo's InfoChip (22×22 `radius:11`,
+  `backgroundElevated`+`borderHairline`, glyph centred), `textMuted` → `errorRed` on hover.
+- **Header:** title + a descriptive subtitle on its **own line** (inline overflowed 560px and clipped
+  the cog).
+- **Version tracks the platform:** realigned 0.3.0 → **0.2.0** to match Basecamp v0.2.0 (the .md
+  retro/knowledge history keeps its v0.3.0 references — those record past work).
