@@ -453,15 +453,18 @@ Item {
         spacing: 10
 
         // ── Header: title + pills + cogwheel ─────────────────────────────────
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 8
-            LogosText {
-                text: "IA → λ"
-                color: root.textPrimary
-                font.pixelSize: Theme.typography.panelTitleText; font.weight: Theme.typography.weightBold
-            }
-            Item { Layout.fillWidth: true }
+            spacing: 3
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                LogosText {
+                    text: "IA → λ"
+                    color: root.textPrimary
+                    font.pixelSize: Theme.typography.panelTitleText; font.weight: Theme.typography.weightBold
+                }
+                Item { Layout.fillWidth: true }
 
             // Gateway pill — surfaces LEZ#519 lag directly (LogosBadge: state-colored)
             LogosBadge {
@@ -485,6 +488,12 @@ Item {
                 size: gwBadge.implicitHeight                     // match the status badges' height
                 iconSize: Math.round(gwBadge.implicitHeight * 0.6)
                 onClicked: root.settingsOpen = !root.settingsOpen
+            }
+            }
+            LogosText {
+                text: "Preserve the Internet Archive to Logos Storage"
+                color: root.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
             }
         }
 
@@ -702,16 +711,18 @@ Item {
                         //    22×22 circle, backgroundElevated + hairline, glyph centered ──
                         Rectangle {
                             id: rmBtn
-                            anchors { top: parent.top; right: parent.right; topMargin: 4; rightMargin: 4 }
+                            anchors { verticalCenter: parent.verticalCenter; right: parent.right; rightMargin: 10 }
                             width: 22; height: 22; radius: 11; z: 5
                             // #32: also show during mirroring/pending (press = abort)
                             visible: model.state === "mirrored" || model.state === "mirroring" || model.state === "pending"
                             property bool armed: false
                             color: rmMa.containsMouse ? root.bgSecondary : Theme.palette.backgroundElevated
-                            border.width: 1; border.color: Theme.palette.borderHairline
+                            border.width: 1
+                            border.color: rmMa.containsMouse ? root.errorRed : Theme.palette.borderHairline
                             LogosText {
                                 anchors.centerIn: parent
-                                text: "✕"; color: root.errorRed
+                                text: "✕"                       // gray by default, red on hover
+                                color: rmMa.containsMouse ? root.errorRed : root.textMuted
                                 font.pixelSize: Theme.typography.secondaryText
                                 font.weight: Theme.typography.weightBold
                             }
@@ -734,7 +745,7 @@ Item {
 
                         RowLayout {
                             id: itemRow
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 30 }
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 42 }
                             spacing: 10
 
                             // ── LEFT: title + Copy link, then ch / slot / tx ids ──
