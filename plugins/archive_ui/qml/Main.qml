@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Logos.Theme    // logos-design-system palette tokens
+import Logos.Controls // logos-design-system components (LogosButton/LogosTextField/LogosBadge) — skill: logos-design-system-adoption
 
 // archive — follow curated LEZ channels, preserve items to Storage.
 // Dark theme matching radio/keeper/stash. Sandbox rules (qml-sandbox-restrictions):
@@ -11,17 +13,17 @@ Item {
     width: 560; height: 720
 
     // ── Dark palette (radio/keeper) ──────────────────────────────────────────
-    readonly property color bgPrimary:     "#171717"
-    readonly property color bgSecondary:   "#262626"
-    readonly property color bgActive:      "#332A27"
-    readonly property color textPrimary:   "#FFFFFF"
-    readonly property color textSecondary: "#A4A4A4"
-    readonly property color textMuted:     "#5D5D5D"
-    readonly property color accentOrange:  "#FF5000"
-    readonly property color successGreen:  "#22C55E"
-    readonly property color warningYellow: "#F59E0B"
-    readonly property color errorRed:      "#FB3748"
-    readonly property color borderColor:   "#383838"
+    readonly property color bgPrimary:     Theme.palette.background
+    readonly property color bgSecondary:   Theme.palette.backgroundSecondary
+    readonly property color bgActive:      Theme.palette.surface
+    readonly property color textPrimary:   Theme.palette.text
+    readonly property color textSecondary: Theme.palette.textSecondary
+    readonly property color textMuted:     Theme.palette.textMuted
+    readonly property color accentOrange:  Theme.palette.primary
+    readonly property color successGreen:  Theme.palette.success
+    readonly property color warningYellow: Theme.palette.warning
+    readonly property color errorRed:      Theme.palette.error
+    readonly property color borderColor:   Theme.palette.border
 
     // ── Backend bridge: logos.callModule("archive", …) + guarded polling ─────
     // (stash_ui/radio-main pattern — the core module runs in logos_host; the QML
@@ -350,78 +352,18 @@ Item {
 
     Rectangle { anchors.fill: parent; color: root.bgPrimary }
 
-    // ── Styled controls (radio's dark components — default QtQuick chrome
-    //    clashes with the dark theme) ─────────────────────────────────────────
-    component DarkButton: Button {
-        id: db
-        hoverEnabled: true   // not on by default in the Basecamp host — no hover state without it
-        contentItem: Text {
-            text: db.text; font.pixelSize: 13
-            color: !db.enabled ? root.textMuted : root.textPrimary
-            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 6; implicitHeight: 32; implicitWidth: 72
-            // a step brighter than any container it sits on (panes are #262626)
-            color: !db.enabled ? "#2A2A2A"
-                 : db.down ? "#1F1F1F"
-                 : db.hovered ? "#4A4A4A" : "#383838"
-            border.color: db.hovered && db.enabled ? "#5A5A5A" : "#4A4A4A"
-            border.width: 1
-            Behavior on color { ColorAnimation { duration: 80 } }
-        }
-    }
-    component AccentButton: Button {
-        id: ab
-        hoverEnabled: true
-        contentItem: Text {
-            text: ab.text; font.pixelSize: 13; font.bold: true
-            color: ab.enabled ? "#FFFFFF" : root.textMuted
-            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 6; implicitHeight: 32; implicitWidth: 84
-            color: !ab.enabled ? "#2A2A2A"
-                 : ab.down ? "#CC4000"
-                 : ab.hovered ? "#FF6A26" : root.accentOrange
-            border.color: ab.enabled ? "transparent" : "#4A4A4A"
-            border.width: ab.enabled ? 0 : 1
-            Behavior on color { ColorAnimation { duration: 80 } }
-        }
-    }
-    component DarkField: TextField {
-        property color fieldBg: root.bgSecondary
-        color: root.textPrimary
-        placeholderTextColor: root.textMuted
-        selectionColor: root.accentOrange
-        background: Rectangle {
-            radius: 6; implicitHeight: 32
-            color: parent.fieldBg
-            border.color: parent && parent.activeFocus ? root.accentOrange : root.borderColor
-            border.width: 1
-        }
-    }
-    component DarkRadio: RadioButton {
-        id: dr
-        spacing: 8
-        font.pixelSize: 12
-        palette.windowText: root.textSecondary
-        indicator: Rectangle {
-            implicitWidth: 18; implicitHeight: 18; radius: 9
-            x: dr.leftPadding; y: dr.topPadding + (dr.availableHeight - height) / 2
-            color: "transparent"; border.width: 2
-            border.color: dr.checked ? root.accentOrange : root.textMuted
-            Rectangle { anchors.centerIn: parent; width: 8; height: 8; radius: 4
-                color: root.accentOrange; visible: dr.checked }
-        }
-    }
+    // ── Controls: adopted from logos-design-system (Logos.Controls).
+    //    Neutral LogosButton (delivery-demo convention — primary actions are
+    //    neutral, accent is reserved for status/state), LogosTextField, LogosBadge.
+    //    Semantic-colored glyph buttons (✕/auto/↻) stay custom ToolButtons below:
+    //    LogosToolButton hardcodes its text color and can't express per-state hue.
 
     // ── ShareCard — rendered offscreen at X/Twitter ratio, no PII ────────────
     Rectangle {
         id: shareCard
         width: 1200; height: 675
         x: -width * 2; y: 0            // parked offscreen; must stay visible for grabToImage
-        color: "#101014"
+        color: Theme.palette.backgroundElevated
         Rectangle {                     // subtle accent frame
             anchors.fill: parent; anchors.margins: 10
             color: "transparent"; border.color: root.accentOrange; border.width: 2; radius: 14
@@ -429,31 +371,31 @@ Item {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 56
             spacing: 18
-            Label {
+            LogosText {
                 text: root.shareData && root.shareData.scope !== "me"
                       ? (root.shareData.title || "A item")
                       : "I'm preserving the Internet Archive"
-                color: "#FFFFFF"; font.pixelSize: 44; font.bold: true
+                color: root.textPrimary; font.pixelSize: 44; font.weight: Theme.typography.weightBold
                 Layout.fillWidth: true; elide: Text.ElideRight
             }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 28
-                Label {
+                LogosText {
                     text: root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[0] : "0"
-                    color: root.accentOrange; font.pixelSize: 120; font.bold: true
+                    color: root.accentOrange; font.pixelSize: 120; font.weight: Theme.typography.weightBold
                 }
                 ColumnLayout {
                     spacing: 4
-                    Label {
+                    LogosText {
                         text: (root.shareData ? root.prettySize(root.shareData.totalBytes || 0).split(" ")[1] : "GB")
                               + " preserved"
-                        color: "#FFFFFF"; font.pixelSize: 30
+                        color: root.textPrimary; font.pixelSize: 30
                     }
-                    Label {
+                    LogosText {
                         text: root.shareData && root.shareData.scope === "me"
                               ? (root.shareData.count || 0) + " items" : "on decentralized Storage"
-                        color: "#A4A4A4"; font.pixelSize: 22
+                        color: root.textSecondary; font.pixelSize: 22
                     }
                 }
                 Item { Layout.fillWidth: true }
@@ -466,7 +408,7 @@ Item {
                     model: root.shareData ? Math.min(6, (root.shareData.items || []).length) : 0
                     Rectangle {
                         implicitWidth: 150; implicitHeight: 110; radius: 10
-                        color: "#1E1E26"; border.color: "#383838"
+                        color: Theme.palette.surfaceRaised; border.color: Theme.palette.borderSubtle
                         clip: true
                         Image {
                             id: thumbImg
@@ -475,16 +417,16 @@ Item {
                             fillMode: Image.PreserveAspectCrop
                             visible: status === Image.Ready
                         }
-                        Label {   // placeholder: item initial
+                        LogosText {   // placeholder: item initial
                             anchors.centerIn: parent
                             visible: thumbImg.status !== Image.Ready
                             text: (root.shareData.items[index].name || "?").substring(0, 1).toUpperCase()
-                            color: root.accentOrange; font.pixelSize: 42; font.bold: true
+                            color: root.accentOrange; font.pixelSize: 42; font.weight: Theme.typography.weightBold
                         }
-                        Label {
+                        LogosText {
                             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 6 }
                             text: root.shareData.items[index].name || ""
-                            color: "#FFFFFF"; font.pixelSize: 12; elide: Text.ElideRight
+                            color: root.textPrimary; font.pixelSize: Theme.typography.secondaryText; elide: Text.ElideRight
                             visible: thumbImg.status !== Image.Ready
                             horizontalAlignment: Text.AlignHCenter
                         }
@@ -495,12 +437,12 @@ Item {
             Item { Layout.fillHeight: true }
             RowLayout {
                 Layout.fillWidth: true
-                Label {
+                LogosText {
                     text: "preserved & verifiable on the Logos Execution Zone"
-                    color: "#A4A4A4"; font.pixelSize: 20
+                    color: root.textSecondary; font.pixelSize: Theme.typography.panelTitleText
                 }
                 Item { Layout.fillWidth: true }
-                Label { text: "logos.co"; color: root.accentOrange; font.pixelSize: 20; font.bold: true }
+                LogosText { text: "logos.co"; color: root.accentOrange; font.pixelSize: Theme.typography.panelTitleText; font.weight: Theme.typography.weightBold }
             }
         }
     }
@@ -511,47 +453,47 @@ Item {
         spacing: 10
 
         // ── Header: title + pills + cogwheel ─────────────────────────────────
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 8
-            Label {
-                text: "IA → λ"
-                color: root.textPrimary
-                font.pixelSize: 20; font.bold: true
-            }
-            Item { Layout.fillWidth: true }
+            spacing: 3
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                LogosText {
+                    text: "IA → λ"
+                    color: root.textPrimary
+                    font.pixelSize: Theme.typography.panelTitleText; font.weight: Theme.typography.weightBold
+                }
+                Item { Layout.fillWidth: true }
 
-            // Gateway pill — surfaces LEZ#519 lag directly
-            Rectangle {
-                implicitWidth: gwRow.implicitWidth + 16; implicitHeight: 24; radius: 12
-                color: root.bgSecondary; border.color: root.borderColor
-                RowLayout {
-                    id: gwRow; anchors.centerIn: parent; spacing: 5
-                    Rectangle { width: 7; height: 7; radius: 3.5; color: root.stateColor(root.gatewayState) }
-                    Label {
-                        text: "Gateway " + root.gatewayState
-                              + (root.gatewayState === "degraded" ? " · lag " + root.syncLag : "")
-                        color: root.textSecondary; font.pixelSize: 11
-                    }
-                }
+            // Gateway pill — surfaces LEZ#519 lag directly (LogosBadge: state-colored)
+            LogosBadge {
+                id: gwBadge
+                text: "Gateway " + root.gatewayState
+                      + (root.gatewayState === "degraded" ? " · lag " + root.syncLag : "")
+                color: root.stateColor(root.gatewayState)
             }
-            Rectangle {
-                implicitWidth: stRow.implicitWidth + 16; implicitHeight: 24; radius: 12
-                color: root.bgSecondary; border.color: root.borderColor
-                RowLayout {
-                    id: stRow; anchors.centerIn: parent; spacing: 5
-                    Rectangle { width: 7; height: 7; radius: 3.5; color: root.stateColor(root.storageState) }
-                    Label { text: "Storage " + root.storageState; color: root.textSecondary; font.pixelSize: 11 }
-                }
+            LogosBadge {
+                text: "Storage " + root.storageState
+                color: root.stateColor(root.storageState)
             }
-            ToolButton {
-                text: "⚙"
+            // Settings — canonical design-system icon button (LogosIconButton +
+            // gear SVG; Logos.Icons ships no gear). Active state = accent tint.
+            // SVG is inlined as a data: URI — the .lgx bundler ships only the view
+            // file (Main.qml), so a loose qml/icons/*.svg asset would be dropped.
+            LogosIconButton {
+                readonly property string gearSvg: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTkuNDA1IDEuMDVjLS40MTMtMS40LTIuMzk3LTEuNC0yLjgxIDBsLS4xLjM0YTEuNDY0IDEuNDY0IDAgMCAxLTIuMTA1Ljg3MmwtLjMxLS4xN2MtMS4yODMtLjY5OC0yLjY4Ni43MDUtMS45ODcgMS45ODdsLjE2OS4zMTFjLjQ0Ni44Mi4wMjMgMS44NDEtLjg3MiAyLjEwNWwtLjM0LjFjLTEuNC40MTMtMS40IDIuMzk3IDAgMi44MWwuMzQuMWExLjQ2NCAxLjQ2NCAwIDAgMSAuODcyIDIuMTA1bC0uMTcuMzFjLS42OTggMS4yODMuNzA1IDIuNjg2IDEuOTg3IDEuOTg3bC4zMTEtLjE2OWExLjQ2NCAxLjQ2NCAwIDAgMSAyLjEwNS44NzJsLjEuMzRjLjQxMyAxLjQgMi4zOTcgMS40IDIuODEgMGwuMS0uMzRhMS40NjQgMS40NjQgMCAwIDEgMi4xMDUtLjg3MmwuMzEuMTdjMS4yODMuNjk4IDIuNjg2LS43MDUgMS45ODctMS45ODdsLS4xNjktLjMxMWExLjQ2NCAxLjQ2NCAwIDAgMSAuODcyLTIuMTA1bC4zNC0uMWMxLjQtLjQxMyAxLjQtMi4zOTcgMC0yLjgxbC0uMzQtLjFhMS40NjQgMS40NjQgMCAwIDEtLjg3Mi0yLjEwNWwuMTctLjMxYy42OTgtMS4yODMtLjcwNS0yLjY4Ni0xLjk4Ny0xLjk4N2wtLjMxMS4xNjlhMS40NjQgMS40NjQgMCAwIDEtMi4xMDUtLjg3MmwtLjEtLjM0ek04IDEwLjkzYTIuOTI5IDIuOTI5IDAgMSAxIDAtNS44NTggMi45MjkgMi45MjkgMCAwIDEgMCA1Ljg1OHoiIGZpbGw9IiM5Njk2OTYiLz4KPC9zdmc+Cg=="
+                iconSource: gearSvg
+                iconColor: root.settingsOpen ? root.accentOrange : root.textSecondary
+                size: gwBadge.implicitHeight                     // match the status badges' height
+                iconSize: Math.round(gwBadge.implicitHeight * 0.6)
                 onClicked: root.settingsOpen = !root.settingsOpen
-                contentItem: Label {
-                    text: parent.text; color: root.settingsOpen ? root.accentOrange : root.textSecondary
-                    font.pixelSize: 16; horizontalAlignment: Text.AlignHCenter
-                }
-                background: Rectangle { color: "transparent" }
+            }
+            }
+            LogosText {
+                text: "Preserve the Internet Archive to Logos Storage"
+                color: root.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
             }
         }
 
@@ -568,18 +510,18 @@ Item {
                 id: settingsCol
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
                 spacing: 8
-                Label { text: "Gateway node"; color: root.textPrimary; font.bold: true; font.pixelSize: 13 }
+                LogosText { text: "Gateway node"; color: root.textPrimary; font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.primaryText }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    DarkField {
+                    LogosTextField {
                         id: nodeUrlField
                         Layout.fillWidth: true
-                        fieldBg: root.bgPrimary
                         placeholderText: root.activeGatewayUrl || "node URL — http://gateway:8080"
                     }
-                    DarkButton {
+                    LogosButton {
                         text: "Apply"
+                        implicitWidth: 72; implicitHeight: 40
                         enabled: nodeUrlField.text.length > 0
                         onClicked: root.call("setGateways",
                             [JSON.stringify([{ nodeUrl: nodeUrlField.text }])],
@@ -587,18 +529,20 @@ Item {
                     }
                 }
                 // ── Channels (#26) — follow + manage from Settings ──────────────
-                Label { text: "Channels"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
+                LogosText { text: "Channels"; color: root.textSecondary; font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.primaryText; topPadding: 6 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 6
-                    DarkField {
+                    LogosTextField {
                         id: followField
                         Layout.fillWidth: true
                         placeholderText: "channel id, id@startSlot, or explorer URL"
-                        onAccepted: followBtn.clicked()
+                        // LogosTextField has no `accepted` signal — wire the inner TextInput
+                        Connections { target: followField.textInput; function onAccepted() { followBtn.clicked() } }
                     }
-                    AccentButton {
+                    LogosButton {
                         id: followBtn
                         text: "Follow"
+                        implicitWidth: 84; implicitHeight: 40
                         enabled: followField.text.length > 0
                         onClicked: root.call("followChannel", [followField.text], function(r) {
                             if (r && r.ok) { root.logEvent("follow", "Following " + root.shortId(r.channelId)); followField.text = "" }
@@ -615,34 +559,36 @@ Item {
                             id: chRow
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 10; rightMargin: 10 }
                             spacing: 8
-                            Label {
+                            LogosText {
                                 visible: !chEdit.visible
                                 Layout.fillWidth: true
                                 text: (model.name || root.shortId(model.channelId) || "channel")
                                       + "  ·  " + (model.synced ? "synced" : "syncing " + (model.progress >= 0 ? model.progress + "%" : "…"))
                                       + "  ·  " + (model.items || 0) + " items"
-                                color: root.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
+                                color: root.textSecondary; font.pixelSize: Theme.typography.secondaryText; elide: Text.ElideRight
                             }
-                            DarkField {
+                            LogosTextField {
                                 id: chEdit                 // #33: custom channel label
                                 visible: false
                                 Layout.fillWidth: true
-                                font.pixelSize: 11
                                 placeholderText: "custom label"
-                                onAccepted: {
-                                    var R = root, id = model.channelId, t = text
-                                    visible = false
-                                    R.call("setChannelLabel", [id, t], function(r) {
-                                        if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
-                                    })
+                                Connections {
+                                    target: chEdit.textInput
+                                    function onAccepted() {
+                                        var R = root, id = model.channelId, t = chEdit.text
+                                        chEdit.visible = false
+                                        R.call("setChannelLabel", [id, t], function(r) {
+                                            if (r && r.ok) R.toast("Channel labeled \"" + t + "\"")
+                                        })
+                                    }
                                 }
-                                Keys.onEscapePressed: visible = false
+                                Keys.onEscapePressed: chEdit.visible = false
                             }
                             ToolButton {                   // #33: ✎ edit label
                                 text: "✎"
                                 visible: !chEdit.visible
-                                onClicked: { chEdit.text = model.label || model.name || ""; chEdit.visible = true; chEdit.forceActiveFocus() }
-                                contentItem: Label { text: parent.text; color: root.textMuted; font.pixelSize: 12 }
+                                onClicked: { chEdit.text = model.label || model.name || ""; chEdit.visible = true; chEdit.textInput.forceActiveFocus() }
+                                contentItem: LogosText { text: parent.text; color: root.textMuted; font.pixelSize: Theme.typography.secondaryText }
                                 background: Rectangle { color: "transparent" }
                             }
                             ToolButton {
@@ -653,19 +599,19 @@ Item {
                                         if (r && r.ok) R.toast(next ? "Auto-preserve ON" : "Auto-preserve off")
                                     })
                                 }
-                                contentItem: Label { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: 11; font.bold: model.autoPreserve }
+                                contentItem: LogosText { text: parent.text; color: model.autoPreserve ? root.successGreen : root.textMuted; font.pixelSize: Theme.typography.secondaryText; font.bold: model.autoPreserve }
                                 background: Rectangle { color: "transparent"; radius: 3; border.color: model.autoPreserve ? root.successGreen : root.borderColor }
                             }
                             ToolButton {
                                 text: "↻"
                                 onClicked: { var R = root, id = model.channelId; R.call("refreshChannel", [id], function(r){ if (r && r.ok) R.logEvent("refresh", "Refreshing " + R.shortId(id)) }) }
-                                contentItem: Label { text: parent.text; color: root.textSecondary; font.pixelSize: 14 }
+                                contentItem: LogosText { text: parent.text; color: root.textSecondary; font.pixelSize: Theme.typography.primaryText }
                                 background: Rectangle { color: "transparent" }
                             }
                             ToolButton {
                                 text: "✕"
                                 onClicked: { var R = root, id = model.channelId; R.call("unfollowChannel", [id], function(r){ if (r && r.ok) R.logEvent("follow", "Unfollowed " + R.shortId(id)) }) }
-                                contentItem: Label { text: parent.text; color: root.errorRed; font.pixelSize: 12 }
+                                contentItem: LogosText { text: parent.text; color: root.errorRed; font.pixelSize: Theme.typography.secondaryText }
                                 background: Rectangle { color: "transparent" }
                             }
                         }
@@ -673,11 +619,12 @@ Item {
                 }
 
                 // ── Remove all (#24) — forget every followed channel + its items ──
-                Label { text: "Danger zone"; color: root.textSecondary; font.bold: true; font.pixelSize: 13; topPadding: 6 }
-                DarkButton {
+                LogosText { text: "Danger zone"; color: root.textSecondary; font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.primaryText; topPadding: 6 }
+                LogosButton {
                     id: removeAllBtn
                     property bool armed: false
                     text: armed ? "Confirm — remove all items?" : "Remove all items"
+                    implicitWidth: 220; implicitHeight: 36
                     onClicked: {
                         if (!armed) { armed = true; return }
                         armed = false
@@ -700,24 +647,25 @@ Item {
                 id: summaryRow
                 anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
                 spacing: 10
-                Label {
+                LogosText {
                     Layout.alignment: Qt.AlignVCenter
                     text: "You're preserving "
                           + (root.summary.mirrored || 0) + " item"
                           + ((root.summary.mirrored || 0) === 1 ? "" : "s")
                           + " · " + root.prettySize(root.summary.usedBytes || 0)
-                    color: root.textPrimary; font.pixelSize: 14; font.bold: true
+                    color: root.textPrimary; font.pixelSize: Theme.typography.primaryText; font.weight: Theme.typography.weightBold
                 }
                 Item { Layout.fillWidth: true }
-                Label {
+                LogosText {
                     Layout.alignment: Qt.AlignVCenter
                     text: "following " + (root.summary.following || 0)
                           + " · " + (root.summary.items || 0) + " items"
-                    color: root.textSecondary; font.pixelSize: 11
+                    color: root.textSecondary; font.pixelSize: Theme.typography.secondaryText
                 }
-                AccentButton {
+                LogosButton {
                     Layout.alignment: Qt.AlignVCenter
                     text: "Share"
+                    implicitWidth: 84; implicitHeight: 32
                     visible: false   // hidden — share cards out of scope for the campaign UI
                     enabled: (root.summary.mirrored || 0) > 0
                     onClicked: root.shareScope("me")
@@ -737,14 +685,14 @@ Item {
                     radius: 6; color: root.bgSecondary
                     border.color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
                     clip: true
-                    Label {
+                    LogosText {
                         id: staleLbl
                         anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 10 }
                         text: root.gatewayState === "offline"
                               ? "Gateway unreachable — showing cached items; nothing here is live."
                               : "Gateway is lagging " + root.syncLag + " slots behind the chain — recent inscriptions may be missing."
                         color: root.gatewayState === "offline" ? root.errorRed : root.warningYellow
-                        font.pixelSize: 11; wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.typography.secondaryText; wrapMode: Text.WordWrap
                     }
                 }
                 ListView {
@@ -759,35 +707,45 @@ Item {
 
                         // ── small red ✕ — only on preserved items (#4); arms a
                         //    left-side "Remove?" confirm (#3), top-right corner ──
-                        ToolButton {
+                        // ── circular ✕ chip — matches delivery-demo's InfoChip:
+                        //    22×22 circle, backgroundElevated + hairline, glyph centered ──
+                        Rectangle {
                             id: rmBtn
-                            anchors { top: parent.top; right: parent.right; topMargin: 2; rightMargin: 4 }
-                            width: 22; height: 22; z: 5
+                            anchors { verticalCenter: parent.verticalCenter; right: parent.right; rightMargin: 10 }
+                            width: 22; height: 22; radius: 11; z: 5
                             // #32: also show during mirroring/pending (press = abort)
                             visible: model.state === "mirrored" || model.state === "mirroring" || model.state === "pending"
                             property bool armed: false
-                            text: "✕"
-                            onClicked: {
-                                if (model.state === "mirroring" || model.state === "pending") {
-                                    var R = root, id = model.id, t = model.iaId || model.title
-                                    R.flipItemState(id, "available")   // instant reset
-                                    R.call("abortPreserve", [id], function(r) {
-                                        if (r && r.ok) R.toast("Aborted " + t)
-                                    })
-                                } else {                                // mirrored → confirm remove
-                                    armed = true; rmArm.restart()
-                                }
+                            color: rmMa.containsMouse ? root.bgSecondary : Theme.palette.backgroundElevated
+                            border.width: 1
+                            border.color: rmMa.containsMouse ? root.errorRed : Theme.palette.borderHairline
+                            LogosText {
+                                anchors.centerIn: parent
+                                text: "✕"                       // gray by default, red on hover
+                                color: rmMa.containsMouse ? root.errorRed : root.textMuted
+                                font.pixelSize: Theme.typography.secondaryText
+                                font.weight: Theme.typography.weightBold
                             }
                             Timer { id: rmArm; interval: 3000; onTriggered: rmBtn.armed = false }
-                            contentItem: Label { text: parent.text; color: root.errorRed
-                                                 font.pixelSize: 13; font.bold: true
-                                                 horizontalAlignment: Text.AlignHCenter }
-                            background: Rectangle { color: "transparent" }
+                            MouseArea {
+                                id: rmMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (model.state === "mirroring" || model.state === "pending") {
+                                        var R = root, id = model.id, t = model.iaId || model.title
+                                        R.flipItemState(id, "available")   // instant reset
+                                        R.call("abortPreserve", [id], function(r) {
+                                            if (r && r.ok) R.toast("Aborted " + t)
+                                        })
+                                    } else {                                // mirrored → confirm remove
+                                        rmBtn.armed = true; rmArm.restart()
+                                    }
+                                }
+                            }
                         }
 
                         RowLayout {
                             id: itemRow
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 30 }
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 42 }
                             spacing: 10
 
                             // ── LEFT: title + Copy link, then ch / slot / tx ids ──
@@ -797,16 +755,16 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 10
-                                    Label {
+                                    LogosText {
                                         text: model.iaId || model.title || model.cid || "untitled"
-                                        color: root.textPrimary; font.pixelSize: 13; font.bold: true
+                                        color: root.textPrimary; font.pixelSize: Theme.typography.primaryText; font.weight: Theme.typography.weightBold
                                         elide: Text.ElideRight; Layout.maximumWidth: 280
                                     }
-                                    Label {
+                                    LogosText {
                                         visible: !!model.iaId
                                         text: "Copy link"
                                         color: linkMa.containsMouse ? root.accentOrange : root.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: linkMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: { root.copyText("https://archive.org/details/" + model.iaId); root.toast("Internet Archive link copied") } }
                                     }
@@ -815,23 +773,23 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 14
-                                    Label {
+                                    LogosText {
                                         visible: !!model.channelId
                                         text: "ch: " + root.shortId(model.channelId)
-                                        color: chMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        color: chMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: chMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: { root.copyText(model.channelId); root.toast("Channel id copied") } }
                                     }
-                                    Label {
+                                    LogosText {
                                         text: "slot: " + (model.inscribedAt || "?")
-                                        color: slotMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        color: slotMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: slotMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: { root.copyText("" + (model.inscribedAt || "")); root.toast("Slot copied") } }
                                     }
-                                    Label {
+                                    LogosText {
                                         visible: !!model.txHash
                                         text: "tx: " + root.shortId(model.txHash)
-                                        color: txMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: 10
+                                        color: txMa.containsMouse ? root.accentOrange : root.textMuted; font.pixelSize: Theme.typography.secondaryText
                                         MouseArea { id: txMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: {
                                                 var R = root
@@ -849,7 +807,7 @@ Item {
                             Rectangle {
                                 id: stateW
                                 Layout.preferredWidth: 116; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
-                                radius: 6
+                                radius: Theme.spacing.radiusXlarge   // pill, matching LogosButton
                                 property string st: model.state || "available"
                                 color: st === "available" ? root.accentOrange : "transparent"
                                 border.width: st === "available" ? 0 : 1
@@ -862,18 +820,18 @@ Item {
                                 // binding is restored (st is no longer available/error).
                                 opacity: ((st === "available" || st === "error")
                                           && root.storageState !== "ready") ? 0.4 : 1.0
-                                Label {
+                                LogosText {
                                     anchors.centerIn: parent
                                     text: stateW.st === "available" ? "Preserve"
                                         : stateW.st === "mirroring" ? ((model.progressBlocks > 0 ? model.progressBlocks : 0) + "%")
                                         : stateW.st === "pending" ? "Pending"
                                         : stateW.st === "mirrored" ? "Preserved"
                                         : stateW.st === "error" ? "Error" : stateW.st
-                                    color: stateW.st === "available" ? "#ffffff"
+                                    color: stateW.st === "available" ? root.textPrimary
                                          : (stateW.st === "mirroring" || stateW.st === "pending") ? root.warningYellow
                                          : stateW.st === "mirrored" ? root.successGreen
                                          : stateW.st === "error" ? root.errorRed : root.textMuted
-                                    font.pixelSize: 12; font.bold: true
+                                    font.pixelSize: Theme.typography.secondaryText; font.weight: Theme.typography.weightBold
                                 }
                                 // softly breathing while in-progress or pending-retry
                                 SequentialAnimation on opacity {
@@ -902,8 +860,8 @@ Item {
                             Rectangle {
                                 visible: rmBtn.armed
                                 Layout.preferredWidth: 84; Layout.preferredHeight: 30; Layout.alignment: Qt.AlignVCenter
-                                radius: 6; color: root.errorRed
-                                Label { anchors.centerIn: parent; text: "Remove?"; color: "#ffffff"; font.pixelSize: 12; font.bold: true }
+                                radius: Theme.spacing.radiusXlarge; color: root.errorRed
+                                LogosText { anchors.centerIn: parent; text: "Remove?"; color: root.textPrimary; font.pixelSize: Theme.typography.secondaryText; font.weight: Theme.typography.weightBold }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                     onClicked: {
@@ -922,11 +880,11 @@ Item {
                             }
                         }
                     }
-                    Label {
+                    LogosText {
                         visible: itemsModel.count === 0
                         anchors.centerIn: parent
                         text: "No items yet — follow a channel first."
-                        color: root.textMuted; font.pixelSize: 12
+                        color: root.textMuted; font.pixelSize: Theme.typography.secondaryText
                         horizontalAlignment: Text.AlignHCenter
                     }
                 }
@@ -982,20 +940,20 @@ Item {
                     delegate: TextEdit {
                         width: activityList.width
                         text: "[" + model.ts + "] " + model.text
-                        color: model.kind === "error" ? "#f44336"
-                             : (model.kind === "mirror" || model.kind === "share") ? "#4caf50"
-                             : model.kind === "gateway" ? "#ffc107" : "#888888"
-                        font.pixelSize: 12
+                        color: model.kind === "error" ? root.errorRed
+                             : (model.kind === "mirror" || model.kind === "share") ? root.successGreen
+                             : model.kind === "gateway" ? root.warningYellow : root.textSecondary
+                        font.pixelSize: Theme.typography.secondaryText
                         font.family: "monospace"
                         wrapMode: TextEdit.WordWrap
                         readOnly: true
                         selectByMouse: true
                     }
-                    Label {
+                    LogosText {
                         visible: activityModel.count === 0
                         anchors.centerIn: parent
                         text: "Follows, preserves and gateway events appear here."
-                        color: root.textMuted; font.pixelSize: 12
+                        color: root.textMuted; font.pixelSize: Theme.typography.secondaryText
                     }
                 }
             }
@@ -1006,11 +964,11 @@ Item {
         visible: root.toastText !== ""
         anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 18 }
         width: Math.min(toastLbl.implicitWidth + 28, parent.width - 40); height: 34; radius: 17
-        color: "#E6262626"; border.color: root.borderColor
+        color: Qt.rgba(root.bgSecondary.r, root.bgSecondary.g, root.bgSecondary.b, 0.9); border.color: root.borderColor
         z: 1000
-        Label {
+        LogosText {
             id: toastLbl; anchors.centerIn: parent
-            text: root.toastText; color: root.textPrimary; font.pixelSize: 12
+            text: root.toastText; color: root.textPrimary; font.pixelSize: Theme.typography.secondaryText
             elide: Text.ElideMiddle; width: Math.min(implicitWidth, parent.width - 24)
             horizontalAlignment: Text.AlignHCenter
         }
