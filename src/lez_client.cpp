@@ -93,20 +93,32 @@ void LezClient::pollHealth()
             return;
         }
         const QByteArray body = reply->readAll();
-        const QJsonObject info = body.size() <= 1024 * 1024
+        const QJsonObject root = body.size() <= 1024 * 1024
                                      ? QJsonDocument::fromJson(body).object()
                                      : QJsonObject{};
+        // v0.2 nests slot/lib_slot under "cryptarchia_info" (systemic rename); older nodes had them at root.
+        const QJsonObject info = root.contains(QLatin1String("cryptarchia_info"))
+                                     ? root.value(QLatin1String("cryptarchia_info")).toObject()
+                                     : root;
         if (!info.contains(QLatin1String("lib_slot"))) {
             failOver(QStringLiteral("gateway_bad_response"));
             return;
         }
         const qint64 slot = info.value(QLatin1String("slot")).toVariant().toLongLong();
         const qint64 lib  = info.value(QLatin1String("lib_slot")).toVariant().toLongLong();
-        const QString mode = jsonStr(info, "mode");
+        // mode is {"Started":"Online"} in v0.2 (object) or a plain "Online" string in older nodes.
+        const QJsonValue modeVal = root.value(QLatin1String("mode"));
+        const QString mode = modeVal.isString()
+                                 ? modeVal.toString()
+                                 : (modeVal.isObject() && !modeVal.toObject().isEmpty()
+                                        ? modeVal.toObject().begin().value().toString()
+                                        : QString());
 
+        // slot - lib is the protocol FINALIZATION DEPTH (normally thousands of slots), NOT sync lag —
+        // surface it for info, but don't gate readiness on it (that pinned a healthy node to "degraded"
+        // forever: real testnet depth ~3.5k ≫ the old 1200 threshold). Ready = reachable + Online.
         m_syncLag = qMax<qint64>(0, slot - lib);
-        const bool healthy = (mode.isEmpty() || mode == QLatin1String("Online"))
-                             && m_syncLag < kLagDegradedThreshold;
+        const bool healthy = (mode.isEmpty() || mode == QLatin1String("Online"));
         m_gatewayState = healthy ? QStringLiteral("ready") : QStringLiteral("degraded");
         emit healthChanged(m_gatewayState, m_syncLag);
         // a degraded (lagging) gateway is surfaced, not rotated away from: with one
