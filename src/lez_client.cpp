@@ -236,15 +236,34 @@ QVector<LezClient::Item> LezClient::extractItems(const QJsonArray& blocks,
                     c.sizeBytes = man.value(QLatin1String("size")).toVariant().toLongLong();
                 } else {
                     c.cid = cid;
-                    c.id = jsonStr(man, "id").isEmpty() ? txHash : jsonStr(man, "id");
-                    // live channels carry "label" (cid_pin convention) rather than "title"
-                    c.title = !jsonStr(man, "title").isEmpty() ? jsonStr(man, "title")
-                              : !jsonStr(man, "label").isEmpty() ? jsonStr(man, "label").left(120)
-                                                                 : cid;
+                    // keeper cid_pin carries metadata as a NESTED JSON string in "label" —
+                    // parse it and prefer the standard schema fields (keeper#43): name / content /
+                    // image / totalSize, with legacy fallbacks (title / files / thumbnail).
+                    const QString labelStr = jsonStr(man, "label");
+                    QJsonObject lab;
+                    if (labelStr.startsWith(QLatin1Char('{')))
+                        lab = QJsonDocument::fromJson(labelStr.toUtf8()).object();
+                    c.id = !jsonStr(man, "id").isEmpty() ? jsonStr(man, "id")
+                         : !jsonStr(lab, "id").isEmpty() ? jsonStr(lab, "id") : txHash;
+                    c.title = !jsonStr(lab, "name").isEmpty()  ? jsonStr(lab, "name")
+                            : !jsonStr(lab, "title").isEmpty() ? jsonStr(lab, "title")
+                            : !jsonStr(man, "title").isEmpty() ? jsonStr(man, "title")
+                            : !labelStr.isEmpty()              ? labelStr.left(120)
+                                                               : cid;
                     c.sizeBytes = man.value(QLatin1String("sizeBytes")).toVariant().toLongLong();
-                    c.items = man.value(QLatin1String("items")).toVariant().toLongLong();
-                    c.thumbnail = jsonStr(man, "thumbnail");
-                    deriveIaRef(c.cid, jsonStr(man, "label"), &c.iaId, &c.iaFile);
+                    if (c.sizeBytes == 0)
+                        c.sizeBytes = lab.value(QLatin1String("totalSize")).toVariant().toLongLong();
+                    const QJsonArray files = !lab.value(QLatin1String("content")).toArray().isEmpty()
+                                                 ? lab.value(QLatin1String("content")).toArray()
+                                                 : lab.value(QLatin1String("files")).toArray();
+                    c.items = files.isEmpty()
+                                  ? man.value(QLatin1String("items")).toVariant().toLongLong()
+                                  : files.size();
+                    c.thumbnail = !jsonStr(lab, "image").isEmpty() ? jsonStr(lab, "image")
+                                                                   : jsonStr(man, "thumbnail");
+                    deriveIaRef(c.cid, labelStr, &c.iaId, &c.iaFile);
+                    if (c.iaId.isEmpty() && !jsonStr(lab, "id").isEmpty())
+                        c.iaId = jsonStr(lab, "id");
                 }
                 st.matched++;
                 out.append(c);
