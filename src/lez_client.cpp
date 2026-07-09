@@ -488,7 +488,11 @@ void LezClient::fetchInfoAndScan(const QString& channelId, QObject* ctx, int gat
             emit scanFinished(channelId, false);
             return;
         }
-        const QJsonObject info = QJsonDocument::fromJson(reply->readAll()).object();
+        const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+        // v0.2 nests slot/lib_slot under "cryptarchia_info" (systemic rename) — same unwrap as pollHealth.
+        const QJsonObject info = root.contains(QLatin1String("cryptarchia_info"))
+                                     ? root.value(QLatin1String("cryptarchia_info")).toObject()
+                                     : root;
         const qint64 libSlot = info.value(QLatin1String("lib_slot")).toVariant().toLongLong();
         if (libSlot <= 0) {
             endScan(channelId, ctx);
