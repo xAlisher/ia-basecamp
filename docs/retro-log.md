@@ -282,3 +282,41 @@ accent-filled button and no gear icon — both gaps were already solved in sibli
 `DarkTheme.qml`/`ColorPalette.qml` source before use — a wrong token renders silent-white, and neither
 qmllint nor the .lgx build catches it. Component/typography tokens (`Theme.spacing.*`, `Theme.typography.*`)
 same discipline.
+
+## Week of 2026-07-10 — archive v0.2 read+preserve + release
+
+### Fails
+**Fail** [project] · **TLS misdiagnosis cost hours + two throwaway proxies.** Archiver flapped
+"gateway offline" on https://paradox. I `find`ed the AppImage mount for bundled Qt/openssl, found
+none, concluded "AppImage has no TLS backend", built `paradox_proxy.py` + `http_proxy.py` + a
+configurable `$ARCHIVE_BASE`. Reality: the AppImage bundles NO Qt at all — it links the SYSTEM Qt6,
+whose `/usr/lib/.../qt6/plugins/tls/libqopensslbackend.so` provides TLS. https worked all along; the
+"offline" was the lib_slot + hex CODE bugs. Root cause: searched for *bundled* capability and treated
+its absence as *absence of capability* without running one real https request (`ss -tnp | grep :443`
+would have shown the module already on Paradox direct). → new skill `appimage-uses-system-qt-tls`.
+
+**Fail** [project] · **Merged dual-variant .lgx can't be signed.** Ran `merge_dual` (portable+dev),
+tried to sign → `Content hash mismatch: package content does not match manifest hashes`. merge_dual
+updates `main` + per-variant hashes but leaves the top-level `root`/`variants` aggregate hashes stale;
+`--allow-unsigned` install skips the check, the signer doesn't. Root cause: assumed the install-time
+merge produces a signable artifact. → amends `lgx-ui-qml-backend-dual-variant`.
+
+**Fail** [process] · **Shipped only the core to the catalog; missed the UI package.** Published
+`archive` to the catalog and called it done; user pointed out booth ships BOTH radio_module + radio_ui.
+The per-module CI reads only the submodule ROOT metadata.json (→ core), so `*_ui` must be published
+MANUALLY (build+sign single-variant → `gh release create <ui>-vX` → rebuild index). Root cause: assumed
+"Release <submodule>" builds every package in the repo. → new skill `catalog-publish-module-and-ui`.
+
+### Wins
+**Win** [process] · **Replicated the module's exact HTTP requests against the node to find bugs.**
+Instead of guessing, curled `/cryptarchia/info` + `/cryptarchia/blocks?slot_from` against Paradox AND
+Sneg — pinned three stacked bugs precisely (hex-string `inscription`, `cryptarchia_info` nesting, Sneg's
+dead block-query endpoint). Ground truth > theory.
+
+**Win** [project] · **Verify-before-claiming via byte-identity + storage logs.** Confirmed each deployed
+`.so` was byte-identical to a fresh committed-main build (nix reproducible) before claiming "fix live",
+and confirmed preserve by the storage_module `Stored data … filename="keeper-<id>-<file>"` lines — not
+"should work".
+
+**Win** [reference] · **Headless inscription via zone-sequencer-rs .so** (dedicated seed channel when the
+keeper key proved keycard-only/unextractable) reached a finalized channel with no GUI/Keycard.

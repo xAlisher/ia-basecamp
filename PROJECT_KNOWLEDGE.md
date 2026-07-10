@@ -100,3 +100,22 @@ module, at all three layers: **palette** (`Theme.palette.*`, zero hex) → **com
   the cog).
 - **Version tracks the platform:** realigned 0.3.0 → **0.2.0** to match Basecamp v0.2.0 (the .md
   retro/knowledge history keeps its v0.3.0 references — those record past work).
+
+## v0.2 node response format + scan/preserve (2026-07-10, #44 read+preserve)
+
+- **`payload.inscription` is a HEX STRING** on v0.2 nodes, not a byte array. `extractItems` decoded it
+  via `.toArray()` → empty → every inscription `skippedNonJson` (`0 matched`). Fix: `QByteArray::fromHex`
+  for strings, keep the byte-array fallback. This meant the archiver couldn't read ANY v0.2 inscription.
+- **`/cryptarchia/info` nests `slot`/`lib_slot` under `cryptarchia_info`.** `fetchInfoAndScan` read
+  `lib_slot` from the root → `0` → `gateway_bad_response` + offline flap. Same unwrap `pollHealth` uses.
+  Grep EVERY `/cryptarchia/info` reader when a nesting bug appears — there was more than one.
+- **Sneg (`100.108.127.3:8080`) is the archiver's DEFAULT gateway but can't serve the scan.**
+  `/cryptarchia/info` → 200 (shows "ready"), but `/cryptarchia/blocks?slot_from&slot_to` → `http=000`.
+  Health-green ≠ scannable. Set the node to Paradox (`https://logos-testnet.paradox.computer`).
+- **`archive_ui` is view-only** (`main:{}`, no `.so`, just `qml/Main.qml`) — ALL scan/decode/preserve
+  logic runs in the CORE `archive` module, which the UI drives via `logos.callModule("archive", …)`.
+- **Collection-mode preserve**: a `cid:"ia:<id>"` item routes through `startIaPreserve` (fetch
+  `<id>_files.xml` → download every file, checksum-verified vs IA → pin), NOT the per-file reseed
+  (which needs a specific filename → `not_on_network_and_no_ia_source`). `$ARCHIVE_BASE` overrides the
+  IA endpoint (testing/mirrors); unset in normal use — system Qt reaches `https://archive.org` directly.
+- **After a decode fix, REMOVE + RE-ADD the channel** — a persisted cursor/`synced` flag skips re-scan.
