@@ -320,3 +320,32 @@ and confirmed preserve by the storage_module `Stored data … filename="keeper-<
 
 **Win** [reference] · **Headless inscription via zone-sequencer-rs .so** (dedicated seed channel when the
 keeper key proved keycard-only/unextractable) reached a finalized channel with no GUI/Keycard.
+
+## Week of 2026-07-10 — modules.alisher.xyz catalog + landing page
+
+### Fails
+**Fail** [infra] · **GitHub Pages on the submodule-heavy catalog repo errored forever.** Enabled Pages
+from `main`/root to serve one 400-byte `logos-repo.json`; the Pages build checked out + tried to upload
+the ENTIRE tree (10 submodules) → artifact too big → `building`↔`errored` oscillation, 404. Root cause:
+assumed Pages serves the one file at root; it uploads the whole checked-out source path. Fix = ORPHAN
+`gh-pages` branch with ONLY {logos-repo.json, CNAME, .nojekyll} → trivial build. The user's "it must be
+trivial" was the right instinct. → skill `catalog-custom-domain-pages`.
+
+**Fail** [project] · **Glob-picked wrong module icons three times** (Notes = 1052×834 screenshot; Stash =
+orange 12×12 action-glyph; Scorched Earth = wrong sub-module). Root cause: globbed `**/*.png` and took
+the first match, and even *excluded* `*_sidebar*` — but the sidebar icon IS the app icon. Fix = read the
+UI plugin `metadata.json` `icon` field. → skill `module-icon-metadata-field`.
+
+**Fail** [project] · **Mislabeled Scorched Earth as "chat".** The repo bundles a legacy chat AND the
+artillery game; I read the first sub-`metadata.json` (chat). Root cause: multi-module repo — must match
+the metadata whose `name` == the app, not the first found.
+
+### Wins
+**Win** [infra] · **Branded catalog under a custom domain** — `modules.alisher.xyz/logos-repo.json` via
+Pages+CNAME, `indexUrl`/`.lgx` left on GitHub (CI/signing untouched). Also caught a latent bug: `indexUrl`
+pointed at the old repo name `logos-modules-release` (actual `logos-basecamp-modules`).
+**Win** [process] · **Data-driven page generator** (Python + template, curated model, base64 icons) → each
+correction regenerates + redeploys in ~30s; enabled fast back-and-forth.
+**Win** [infra] · **Toggle the Pages custom domain (cname ""→domain) to force Let's Encrypt provisioning**
+when it stalls at `null`; a "cert not valid" browser error right after = client cache/HSTS, verify with
+`curl -w %{ssl_verify_result}` + incognito.
