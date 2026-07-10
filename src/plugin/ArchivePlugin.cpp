@@ -33,6 +33,18 @@ QString fail(const QString& code)
     const QJsonObject o{ { QStringLiteral("ok"), false }, { QStringLiteral("error"), code } };
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
+
+// IA download endpoint — configurable via $ARCHIVE_BASE so it can be routed
+// through a local http proxy when the host Qt has no TLS backend and therefore
+// can't reach https://archive.org directly. Defaults to the real site.
+QString archiveBase()
+{
+    static const QByteArray env = qgetenv("ARCHIVE_BASE");
+    static const QString base = env.isEmpty()
+        ? QStringLiteral("https://archive.org")
+        : QString::fromLocal8Bit(env).trimmed();
+    return base;
+}
 } // namespace
 
 ArchivePlugin::ArchivePlugin(QObject* parent) : QObject(parent) {}
@@ -466,7 +478,7 @@ void ArchivePlugin::tryReseedCandidate(const QString& itemId)
 
     if (!m_nam)
         m_nam = new QNetworkAccessManager(this);
-    const QUrl url(QStringLiteral("https://archive.org/download/%1/%2").arg(iaId, iaFile));
+    const QUrl url((archiveBase() + QStringLiteral("/download/%1/%2")).arg(iaId, iaFile));
     QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "ia-basecamp/0.2");
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -598,7 +610,7 @@ void ArchivePlugin::startIaPreserve(const QString& itemId, const QString& iaId)
 
     if (!m_nam)
         m_nam = new QNetworkAccessManager(this);
-    const QUrl url(QStringLiteral("https://archive.org/download/%1/%1_files.xml").arg(iaId));
+    const QUrl url((archiveBase() + QStringLiteral("/download/%1/%1_files.xml")).arg(iaId));
     QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "ia-basecamp/0.2");
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -659,7 +671,7 @@ void ArchivePlugin::iaNextFile()
 
     const IaFileEntry entry = m_iaFiles.at(m_iaIdx);
     const QString itemId = m_iaItemId;
-    const QUrl url(QStringLiteral("https://archive.org/download/%1/%2").arg(m_iaIaId, entry.name));
+    const QUrl url((archiveBase() + QStringLiteral("/download/%1/%2")).arg(m_iaIaId, entry.name));
     QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "ia-basecamp/0.2");
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -728,15 +740,21 @@ QString ArchivePlugin::mirrorItem(const QString& itemId)
                         : QStringLiteral("storage_offline"));
 
     const QString cid = m_lez->itemCid(itemId);
-    if (cid.isEmpty()) {
-        // campaign ia_item entry (#14): no inscribed CID — content comes from the
-        // Internet Archive, checksum-verified, stored locally
-        QString iaId;
-        for (const QJsonValue& v : m_lez->itemsJson()) {
-            const QJsonObject c = v.toObject();
-            if (c.value(QStringLiteral("id")).toString() == itemId) {
-                iaId = c.value(QStringLiteral("iaId")).toString();
-                break;
+    // Content sourced from the Internet Archive (not a pinned Storage CID):
+    //   - campaign ia_item entry (#14): empty cid
+    //   - keeper collection-mode entry: cid "ia:<identifier>" (item-level, no file)
+    // Both preserve by downloading the whole IA item: manifest -> every file,
+    // checksum-verified against IA, then pinned. Pinning "ia:<id>" as a Storage CID
+    // can't work (it isn't one), and the per-file reseed needs a specific filename.
+    if (cid.isEmpty() || cid.startsWith(QLatin1String("ia:"))) {
+        QString iaId = cid.startsWith(QLatin1String("ia:")) ? cid.mid(3) : QString();
+        if (iaId.isEmpty()) {
+            for (const QJsonValue& v : m_lez->itemsJson()) {
+                const QJsonObject c = v.toObject();
+                if (c.value(QStringLiteral("id")).toString() == itemId) {
+                    iaId = c.value(QStringLiteral("iaId")).toString();
+                    break;
+                }
             }
         }
         if (iaId.isEmpty())

@@ -188,17 +188,27 @@ QVector<LezClient::Item> LezClient::extractItems(const QJsonArray& blocks,
                     continue;
                 }
 
-                // inscription = byte array → UTF-8 JSON manifest (non-JSON payloads are
-                // some other producer's data on this channel — skip, don't fail the scan)
-                const QJsonArray arr = payload.value(QLatin1String("inscription")).toArray();
-                if (arr.size() > kMaxInscriptionBytes) {
-                    st.skippedOversized++;
-                    continue;   // no legitimate manifest is this big — refuse the allocation
-                }
+                // inscription → UTF-8 JSON manifest (non-JSON payloads are some other
+                // producer's data on this channel — skip, don't fail the scan).
+                // v0.2 nodes serialize it as a HEX STRING; older nodes as a byte array.
+                const QJsonValue inscVal = payload.value(QLatin1String("inscription"));
                 QByteArray bytes;
-                bytes.reserve(arr.size());
-                for (const QJsonValue& byte : arr)
-                    bytes.append(static_cast<char>(byte.toInt()));
+                if (inscVal.isString()) {
+                    bytes = QByteArray::fromHex(inscVal.toString().toLatin1());
+                    if (bytes.size() > kMaxInscriptionBytes) {
+                        st.skippedOversized++;
+                        continue;   // no legitimate manifest is this big — refuse the allocation
+                    }
+                } else {
+                    const QJsonArray arr = inscVal.toArray();
+                    if (arr.size() > kMaxInscriptionBytes) {
+                        st.skippedOversized++;
+                        continue;
+                    }
+                    bytes.reserve(arr.size());
+                    for (const QJsonValue& byte : arr)
+                        bytes.append(static_cast<char>(byte.toInt()));
+                }
                 const QJsonDocument doc = QJsonDocument::fromJson(bytes);
                 if (!doc.isObject()) {
                     st.skippedNonJson++;
@@ -488,7 +498,11 @@ void LezClient::fetchInfoAndScan(const QString& channelId, QObject* ctx, int gat
             emit scanFinished(channelId, false);
             return;
         }
-        const QJsonObject info = QJsonDocument::fromJson(reply->readAll()).object();
+        const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+        // v0.2 nests slot/lib_slot under "cryptarchia_info" (systemic rename) — same unwrap as pollHealth.
+        const QJsonObject info = root.contains(QLatin1String("cryptarchia_info"))
+                                     ? root.value(QLatin1String("cryptarchia_info")).toObject()
+                                     : root;
         const qint64 libSlot = info.value(QLatin1String("lib_slot")).toVariant().toLongLong();
         if (libSlot <= 0) {
             endScan(channelId, ctx);
