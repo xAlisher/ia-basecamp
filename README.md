@@ -1,5 +1,8 @@
 # ia-basecamp — sovereign archive follower & preservation
 
+> This is a personal, experimental hobby project. It is not an official Logos product. Not audited.
+
+
 **Follow curated, permanent archive channels and help preserve their items to
 decentralized Storage — from any machine, no node required.**
 
